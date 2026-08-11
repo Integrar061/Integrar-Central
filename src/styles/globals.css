@@ -1,0 +1,63 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --primary: #0066ff;
+    --primary-hover: #0052cc;
+    --accent-cyan: #06b6d4;
+    --bg-main: #f8fafc;
+    --card-bg: #ffffff;
+    --border-light: #e2e8f0;
+    --text-navy: #0f172a;
+  }
+
+  body {
+    background-color: var(--bg-main);
+    color: var(--text-navy);
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  }
+}
+
+/* Scrollbar estilizada Tech */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #0066ff;
+}
+
+/* Microinterações e animações */
+.glass-effect {
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.glow-tech {
+  box-shadow: 0 0 20px -3px rgba(0, 102, 255, 0.25);
+}
+
+.active-nav-indicator {
+  position: relative;
+}
+.active-nav-indicator::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 60%;
+  background-color: #0066ff;
+  border-radius: 0 4px 4px 0;
+}
