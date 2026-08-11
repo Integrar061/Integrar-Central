@@ -136,63 +136,78 @@ export const FinancialDashboard: React.FC = () => {
     doc.save(`Relatorio_Executivo_Integrar_${new Date().toISOString().split('T')[0]}.pdf`);
   };
 
-  // CONFIGURAÇÕES DOS GRÁFICOS (CHART.JS)
-  // 1. Evolução de Faturamento Mês a Mês
+  // CONFIGURAÇÕES DOS GRÁFICOS (dados reais do sistema)
+  const monthLabels = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+  const currentYear = new Date().getFullYear();
+  const monthlyRevenue = Array(12).fill(0) as number[];
+  plans.forEach(p => {
+    const month = new Date(p.createdAt).getMonth();
+    if (!Number.isNaN(month) && new Date(p.createdAt).getFullYear() === currentYear) {
+      monthlyRevenue[month] += p.paidAmount;
+    }
+  });
+
   const revenueChartData = {
-    labels: ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago'],
+    labels: monthLabels,
     datasets: [
       {
-        label: 'Faturamento 2026 (R$)',
-        data: [12400, 15800, 18200, 21500, 24000, 22800, 27500, 31200],
+        label: `Faturamento ${currentYear} (R$)`,
+        data: monthlyRevenue,
         borderColor: '#0066FF',
         backgroundColor: 'rgba(0, 102, 255, 0.1)',
         fill: true,
-        tension: 0.4
-      },
-      {
-        label: 'Faturamento 2025 (R$)',
-        data: [9800, 11200, 13000, 14500, 16200, 15900, 18000, 19500],
-        borderColor: '#94A3B8',
-        borderDash: [5, 5],
-        backgroundColor: 'transparent',
         tension: 0.4
       }
     ]
   };
 
-  // 2. Faturamento por Categoria (Pizza/Doughnut)
+  const categoryTotals = plans.reduce<Record<string, number>>((acc, p) => {
+    acc[p.category] = (acc[p.category] || 0) + p.paidAmount;
+    return acc;
+  }, {});
+  const categoryLabels = Object.keys(categoryTotals);
   const categoryChartData = {
-    labels: ['Terapêutico (Ozônio)', 'Integrativo (Soroterapia)', 'Estético (Drenagem/Facial)', 'Wellness (Acupuntura)'],
+    labels: categoryLabels.length ? categoryLabels : ['Sem dados'],
     datasets: [
       {
-        data: [42, 30, 18, 10],
-        backgroundColor: ['#0066FF', '#06B6D4', '#38BDF8', '#94A3B8'],
+        data: categoryLabels.length ? categoryLabels.map(k => categoryTotals[k]) : [1],
+        backgroundColor: ['#0066FF', '#06B6D4', '#38BDF8', '#94A3B8', '#64748B'],
         borderWidth: 2,
         borderColor: '#ffffff'
       }
     ]
   };
 
-  // 3. Faturamento por Profissional
+  const professionalTotals = appointments.reduce<Record<string, number>>((acc, a) => {
+    if (a.status === 'Realizada' || a.status === 'Confirmada') {
+      acc[a.professional] = (acc[a.professional] || 0) + 1;
+    }
+    return acc;
+  }, {});
+  const professionalLabels = Object.keys(professionalTotals);
   const professionalChartData = {
-    labels: ['Dr. Fernando Silva', 'Dra. Camila Alencar'],
+    labels: professionalLabels.length ? professionalLabels : ['Sem dados'],
     datasets: [
       {
-        label: 'Faturamento no Período (R$)',
-        data: [38500, 28900],
-        backgroundColor: ['#0066FF', '#06B6D4'],
+        label: 'Sessões no período',
+        data: professionalLabels.length ? professionalLabels.map(k => professionalTotals[k]) : [0],
+        backgroundColor: ['#0066FF', '#06B6D4', '#38BDF8', '#94A3B8'],
         borderRadius: 12
       }
     ]
   };
 
-  // 4. Funil de Origem dos Pacientes (Lead Source)
+  const originTotals = patients.reduce<Record<string, number>>((acc, p) => {
+    acc[p.origin] = (acc[p.origin] || 0) + 1;
+    return acc;
+  }, {});
+  const originLabels = Object.keys(originTotals);
   const originChartData = {
-    labels: ['Instagram', 'Google (Ads/Orgânico)', 'Indicação', 'Campanhas Meta', 'Outros'],
+    labels: originLabels.length ? originLabels : ['Sem dados'],
     datasets: [
       {
-        label: 'Pacientes Convertidos',
-        data: [45, 28, 35, 12, 5],
+        label: 'Pacientes por origem',
+        data: originLabels.length ? originLabels.map(k => originTotals[k]) : [0],
         backgroundColor: '#0066FF',
         borderRadius: 8
       }
@@ -229,7 +244,6 @@ export const FinancialDashboard: React.FC = () => {
           value={`R$ ${totalRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
           subtitle="Total acumulado em caixa"
           icon={<DollarSign className="w-5 h-5" />}
-          trend={{ value: '+14.2% vs mês anterior', isPositive: true }}
           highlight
         />
 
@@ -238,7 +252,6 @@ export const FinancialDashboard: React.FC = () => {
           value={`R$ ${averageTicket.toFixed(2)}`}
           subtitle="Valor médio por contrato fechado"
           icon={<TrendingUp className="w-5 h-5" />}
-          trend={{ value: '+8.5%', isPositive: true }}
         />
 
         <StatCard
@@ -246,7 +259,6 @@ export const FinancialDashboard: React.FC = () => {
           value={activePatientCount}
           subtitle="Em tratamento ou manutenção"
           icon={<Users className="w-5 h-5" />}
-          trend={{ value: '+12 novos este mês', isPositive: true }}
         />
 
         <StatCard
@@ -254,7 +266,6 @@ export const FinancialDashboard: React.FC = () => {
           value={`${attendanceRate}%`}
           subtitle={`Faltas estimam R$ ${estimatedMissedLoss.toFixed(2)} não faturados`}
           icon={<CheckCircle2 className="w-5 h-5" />}
-          trend={{ value: '-2% faltas', isPositive: false }}
         />
       </div>
 

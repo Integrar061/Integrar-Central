@@ -30,7 +30,7 @@ export const TreatmentCatalog: React.FC = () => {
     pricePerSession: 200,
     defaultSessions: 5,
     durationMinutes: 45,
-    enabledProfessionals: ['Dr. Fernando Silva'],
+    enabledProfessionals: [] as string[],
     active: true
   });
 
@@ -42,7 +42,7 @@ export const TreatmentCatalog: React.FC = () => {
       pricePerSession: 200,
       defaultSessions: 5,
       durationMinutes: 45,
-      enabledProfessionals: ['Dr. Fernando Silva'],
+      enabledProfessionals: [],
       active: true
     });
     setIsModalOpen(true);
@@ -110,6 +110,19 @@ export const TreatmentCatalog: React.FC = () => {
       </div>
 
       {/* Grid do Catálogo */}
+      {treatments.length === 0 && (
+        <Card>
+          <div className="text-center py-10">
+            <Activity className="w-10 h-10 text-slate-300 mx-auto mb-2" />
+            <h3 className="font-extrabold text-slate-800">Catálogo vazio</h3>
+            <p className="text-xs text-slate-400 mt-1 mb-4">Cadastre os tratamentos reais oferecidos pela clínica.</p>
+            <Button onClick={handleOpenNew} variant="primary" size="sm" icon={<Plus className="w-4 h-4" />}>
+              Adicionar primeiro tratamento
+            </Button>
+          </div>
+        </Card>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {treatments.map((treatment) => {
           const calculatedTotal = treatment.pricePerSession * treatment.defaultSessions;
@@ -157,11 +170,15 @@ export const TreatmentCatalog: React.FC = () => {
                 <div className="pt-3">
                   <span className="text-[10px] font-bold uppercase text-slate-400 block mb-1">Profissionais Habilitados</span>
                   <div className="flex flex-wrap gap-1">
-                    {treatment.enabledProfessionals.map((prof, idx) => (
-                      <span key={idx} className="px-2 py-0.5 rounded text-[10px] font-semibold bg-brand-50 text-brand-700">
-                        {prof}
-                      </span>
-                    ))}
+                    {treatment.enabledProfessionals.length === 0 ? (
+                      <span className="text-[10px] text-slate-400 font-medium">Nenhum profissional vinculado</span>
+                    ) : (
+                      treatment.enabledProfessionals.map((prof, idx) => (
+                        <span key={idx} className="px-2 py-0.5 rounded text-[10px] font-semibold bg-brand-50 text-brand-700">
+                          {prof}
+                        </span>
+                      ))
+                    )}
                   </div>
                 </div>
               </div>
@@ -259,6 +276,25 @@ export const TreatmentCatalog: React.FC = () => {
                 className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-brand-500 outline-none"
               />
             </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold uppercase text-slate-600 mb-1">Profissionais habilitados</label>
+            <input
+              type="text"
+              placeholder="Separe nomes por vírgula"
+              value={formData.enabledProfessionals.join(', ')}
+              onChange={(e) =>
+                setFormData({
+                  ...formData,
+                  enabledProfessionals: e.target.value
+                    .split(',')
+                    .map(s => s.trim())
+                    .filter(Boolean)
+                })
+              }
+              className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-brand-500 outline-none"
+            />
           </div>
 
           <div className="p-3 bg-brand-50 rounded-xl border border-brand-100 flex justify-between items-center text-xs font-bold text-brand-900">

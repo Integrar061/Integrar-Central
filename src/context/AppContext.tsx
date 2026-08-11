@@ -20,6 +20,13 @@ import {
   INITIAL_CAMPAIGNS 
 } from '../mock/initialData';
 import { useAuth } from './AuthContext';
+import { loadStoredSession } from '../lib/googleAuth';
+import {
+  createGoogleCalendarEvent,
+  deleteGoogleCalendarEvent,
+  listUpcomingGoogleEvents,
+  parseGoogleEventSchedule
+} from '../lib/googleCalendar';
 
 interface AppContextType {
   patients: Patient[];
@@ -29,18 +36,17 @@ interface AppContextType {
   auditLogs: AuditLog[];
   gcalConfig: GoogleCalendarConfig;
   campaigns: CampaignHistory[];
+  gcalBusy: boolean;
+  gcalError: string | null;
   
-  // Ações de Pacientes
   addPatient: (patientData: Omit<Patient, 'id' | 'timeline' | 'attachments' | 'firstVisitDate' | 'lastVisitDate' | 'churnRisk'>) => void;
   updatePatient: (patient: Patient) => void;
   deletePatient: (id: string) => void;
   addTimelineItem: (patientId: string, type: TimelineItem['type'], title: string, description: string) => void;
   
-  // Ações de Tratamentos
   addTreatmentCatalogItem: (item: Omit<TreatmentCatalogItem, 'id'>) => void;
   updateTreatmentCatalogItem: (item: TreatmentCatalogItem) => void;
   
-  // Ações de Planos de Tratamento (Regra Crítica de Negócio)
   createPatientTreatmentPlan: (
     patientId: string, 
     treatmentCatalogId: string, 
@@ -50,58 +56,56 @@ interface AppContextType {
     notes?: string
   ) => void;
   
-  // Ações de Agendamento
-  addAppointment: (appointment: Omit<Appointment, 'id' | 'syncedWithGoogle'>) => { success: boolean; error?: string };
-  updateAppointmentStatus: (id: string, newStatus: AppointmentStatus) => void;
+  addAppointment: (appointment: Omit<Appointment, 'id' | 'syncedWithGoogle' | 'googleEventId'>) => Promise<{ success: boolean; error?: string }>;
+  updateAppointmentStatus: (id: string, newStatus: AppointmentStatus) => Promise<void>;
   
-  // Ações Google Calendar
-  toggleGcalConnection: () => void;
-  syncGcalNow: () => void;
+  connectGoogleCalendar: () => Promise<void>;
+  disconnectGoogleCalendar: () => Promise<void>;
+  syncGcalNow: () => Promise<void>;
   
-  // Reset
   resetData: () => void;
 }
 
-const STORAGE_KEY = 'integrar_central_v1_store';
+const STORAGE_KEY = 'integrar_central_v2_store';
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
+
+function readStore<T>(key: string, fallback: T): T {
+  try {
+    const saved = localStorage.getItem(key);
+    return saved ? (JSON.parse(saved) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { currentUser } = useAuth();
 
-  const [patients, setPatients] = useState<Patient[]>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_patients`);
-    return saved ? JSON.parse(saved) : INITIAL_PATIENTS;
-  });
+  const [patients, setPatients] = useState<Patient[]>(() =>
+    readStore(`${STORAGE_KEY}_patients`, INITIAL_PATIENTS)
+  );
+  const [treatments, setTreatments] = useState<TreatmentCatalogItem[]>(() =>
+    readStore(`${STORAGE_KEY}_treatments`, INITIAL_TREATMENTS)
+  );
+  const [plans, setPlans] = useState<PatientTreatmentPlan[]>(() =>
+    readStore(`${STORAGE_KEY}_plans`, INITIAL_PLANS)
+  );
+  const [appointments, setAppointments] = useState<Appointment[]>(() =>
+    readStore(`${STORAGE_KEY}_appointments`, INITIAL_APPOINTMENTS)
+  );
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>(() =>
+    readStore(`${STORAGE_KEY}_auditLogs`, INITIAL_AUDIT_LOGS)
+  );
+  const [gcalConfig, setGcalConfig] = useState<GoogleCalendarConfig>(() =>
+    readStore(`${STORAGE_KEY}_gcalConfig`, INITIAL_GCAL_CONFIG)
+  );
+  const [campaigns] = useState<CampaignHistory[]>(() =>
+    readStore(`${STORAGE_KEY}_campaigns`, INITIAL_CAMPAIGNS)
+  );
+  const [gcalBusy, setGcalBusy] = useState(false);
+  const [gcalError, setGcalError] = useState<string | null>(null);
 
-  const [treatments, setTreatments] = useState<TreatmentCatalogItem[]>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_treatments`);
-    return saved ? JSON.parse(saved) : INITIAL_TREATMENTS;
-  });
-
-  const [plans, setPlans] = useState<PatientTreatmentPlan[]>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_plans`);
-    return saved ? JSON.parse(saved) : INITIAL_PLANS;
-  });
-
-  const [appointments, setAppointments] = useState<Appointment[]>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_appointments`);
-    return saved ? JSON.parse(saved) : INITIAL_APPOINTMENTS;
-  });
-
-  const [auditLogs, setAuditLogs] = useState<AuditLog[]>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_auditLogs`);
-    return saved ? JSON.parse(saved) : INITIAL_AUDIT_LOGS;
-  });
-
-  const [gcalConfig, setGcalConfig] = useState<GoogleCalendarConfig>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_gcalConfig`);
-    return saved ? JSON.parse(saved) : INITIAL_GCAL_CONFIG;
-  });
-
-  const [campaigns] = useState<CampaignHistory[]>(INITIAL_CAMPAIGNS);
-
-  // Persistência em LocalStorage
   useEffect(() => {
     localStorage.setItem(`${STORAGE_KEY}_patients`, JSON.stringify(patients));
   }, [patients]);
@@ -126,8 +130,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem(`${STORAGE_KEY}_gcalConfig`, JSON.stringify(gcalConfig));
   }, [gcalConfig]);
 
-  // Função auxiliar para registrar logs de auditoria
+  // Ao logar, alinha o status da Agenda com a sessão Google ativa
+  useEffect(() => {
+    if (!currentUser) return;
+    const session = loadStoredSession();
+    if (session) {
+      setGcalConfig(prev => ({
+        ...prev,
+        isConnected: true,
+        accountEmail: session.profile.email,
+        webhookStatus: 'Ativo (Tempo Real)'
+      }));
+    }
+  }, [currentUser?.id]);
+
   const logAudit = (action: string, entity: AuditLog['entity'], targetId: string, details: string, previousValue?: string, newValue?: string) => {
+    if (!currentUser) return;
     const newLog: AuditLog = {
       id: `log-${Date.now()}`,
       timestamp: new Date().toLocaleString('pt-BR'),
@@ -143,7 +161,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setAuditLogs(prev => [newLog, ...prev]);
   };
 
-  // PACIENTES
   const addPatient: AppContextType['addPatient'] = (data) => {
     const today = new Date().toISOString().split('T')[0];
     const newId = `pat-${Date.now()}`;
@@ -159,7 +176,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           title: 'Cadastro Criado',
           description: `Cadastro inicial realizado no sistema como ${data.status}.`,
           date: today,
-          author: currentUser.name
+          author: currentUser?.name || 'Sistema'
         }
       ],
       firstVisitDate: today,
@@ -193,27 +210,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       title,
       description,
       date: today,
-      author: currentUser.name
+      author: currentUser?.name || 'Sistema'
     };
 
     setPatients(prev => prev.map(p => {
       if (p.id === patientId) {
-        return {
-          ...p,
-          timeline: [newItem, ...p.timeline]
-        };
+        return { ...p, timeline: [newItem, ...p.timeline] };
       }
       return p;
     }));
   };
 
-  // TRATAMENTOS (CATÁLOGO)
   const addTreatmentCatalogItem = (data: Omit<TreatmentCatalogItem, 'id'>) => {
     const newId = `trt-${Date.now()}`;
-    const newItem: TreatmentCatalogItem = {
-      ...data,
-      id: newId
-    };
+    const newItem: TreatmentCatalogItem = { ...data, id: newId };
     setTreatments(prev => [...prev, newItem]);
     logAudit('Adicionado Novo Tratamento ao Catálogo', 'Catálogo', newId, `Tratamento ${data.name} cadastrado no catálogo mestre.`);
   };
@@ -231,7 +241,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
   };
 
-  // PLANO DE TRATAMENTO (REGRA CRÍTICA DE NEGÓCIO)
   const createPatientTreatmentPlan: AppContextType['createPatientTreatmentPlan'] = (
     patientId, 
     treatmentCatalogId, 
@@ -242,7 +251,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   ) => {
     const patient = patients.find(p => p.id === patientId);
     const catalogItem = treatments.find(t => t.id === treatmentCatalogId);
-
     if (!patient || !catalogItem) return;
 
     const totalAmount = (customSessionPrice * totalSessions) * (1 - (discountPercent / 100));
@@ -265,14 +273,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       paidAmount: 0.00,
       openBalance: totalAmount,
       createdAt: today,
-      createdBy: currentUser.name,
+      createdBy: currentUser?.name || 'Sistema',
       updatedAt: today,
       status: 'Ativo'
     };
 
     setPlans(prev => [newPlan, ...prev]);
 
-    // Registro de Auditoria da Personalização de Valores
     const isCustomPrice = customSessionPrice !== catalogItem.pricePerSession;
     logAudit(
       'Criação de Plano de Tratamento',
@@ -283,7 +290,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       `Plano Vinculado: R$ ${customSessionPrice}/sessão (${totalSessions} sessões) - Total R$ ${totalAmount.toFixed(2)}${isCustomPrice ? ' [VALOR PERSONALIZADO]' : ''}`
     );
 
-    // Adiciona na timeline do paciente
     addTimelineItem(
       patientId,
       'tratamento_contratado',
@@ -291,30 +297,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       `Plano de ${totalSessions} sessões por R$ ${totalAmount.toFixed(2)} (R$ ${customSessionPrice.toFixed(2)}/sessão).`
     );
 
-    // Atualiza status do paciente para 'Em tratamento'
     setPatients(prev => prev.map(p => p.id === patientId ? { ...p, status: 'Em tratamento' } : p));
   };
 
-  // AGENDAMENTO & BLOQUEIO DE CONFLITO
-  const addAppointment: AppContextType['addAppointment'] = (data) => {
-    // Validação de conflito: mesmo profissional ou mesma sala no mesmo horário e data
+  const addAppointment: AppContextType['addAppointment'] = async (data) => {
     const conflict = appointments.find(a => {
       if (a.status === 'Cancelada') return false;
       if (a.date !== data.date) return false;
 
-      const newStart = data.startTime;
-      const newEnd = data.endTime;
+      const overlapTime =
+        (data.startTime >= a.startTime && data.startTime < a.endTime) ||
+        (data.endTime > a.startTime && data.endTime <= a.endTime);
 
-      const overlapTime = (newStart >= a.startTime && newStart < a.endTime) || (newEnd > a.startTime && newEnd <= a.endTime);
-
-      const sameProfessional = a.professional === data.professional;
-      const sameRoom = a.room === data.room;
-
-      return overlapTime && (sameProfessional || sameRoom);
+      return overlapTime && (a.professional === data.professional || a.room === data.room);
     });
 
     if (conflict) {
-      const conflictType = conflict.professional === data.professional ? `com o(a) ${data.professional}` : `na ${data.room}`;
+      const conflictType = conflict.professional === data.professional
+        ? `com o(a) ${data.professional}`
+        : `na ${data.room}`;
       return {
         success: false,
         error: `Conflito de horário! Já existe um agendamento (${conflict.patientName}) no horário das ${conflict.startTime} às ${conflict.endTime} ${conflictType}.`
@@ -322,29 +323,64 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     const newId = `apt-${Date.now()}`;
+    let googleEventId: string | undefined;
+    let syncedWithGoogle = false;
+
+    if (gcalConfig.isConnected) {
+      try {
+        googleEventId = await createGoogleCalendarEvent(data);
+        syncedWithGoogle = true;
+      } catch (err) {
+        return {
+          success: false,
+          error: err instanceof Error ? err.message : 'Falha ao sincronizar com Google Agenda.'
+        };
+      }
+    }
+
     const newAppointment: Appointment = {
       ...data,
       id: newId,
-      syncedWithGoogle: gcalConfig.isConnected,
-      googleEventId: gcalConfig.isConnected ? `gcal_evt_${Date.now()}` : undefined
+      syncedWithGoogle,
+      googleEventId
     };
 
     setAppointments(prev => [newAppointment, ...prev]);
 
-    logAudit('Novo Agendamento Criado', 'Agendamento', newId, `Sessão de ${data.treatmentName} para ${data.patientName} agendada para ${data.date} às ${data.startTime}.`);
+    if (syncedWithGoogle) {
+      setGcalConfig(prev => ({
+        ...prev,
+        lastSyncedAt: new Date().toLocaleString('pt-BR'),
+        syncedEventsCount: prev.syncedEventsCount + 1
+      }));
+    }
+
+    logAudit(
+      'Novo Agendamento Criado',
+      'Agendamento',
+      newId,
+      `Sessão de ${data.treatmentName} para ${data.patientName} agendada para ${data.date} às ${data.startTime}${syncedWithGoogle ? ' (Google Agenda)' : ''}.`
+    );
 
     return { success: true };
   };
 
-  const updateAppointmentStatus = (id: string, newStatus: AppointmentStatus) => {
+  const updateAppointmentStatus = async (id: string, newStatus: AppointmentStatus) => {
     const targetApt = appointments.find(a => a.id === id);
     if (!targetApt) return;
 
     setAppointments(prev => prev.map(a => a.id === id ? { ...a, status: newStatus } : a));
-
     logAudit('Atualização de Status de Agendamento', 'Agendamento', id, `Status da sessão de ${targetApt.patientName} alterado de ${targetApt.status} para ${newStatus}.`);
 
-    // Se o agendamento foi marcado como 'Realizada', incrementa sessões concluídas no plano de tratamento
+    if (newStatus === 'Cancelada' && targetApt.googleEventId && gcalConfig.isConnected) {
+      try {
+        await deleteGoogleCalendarEvent(targetApt.googleEventId);
+        setAppointments(prev => prev.map(a => a.id === id ? { ...a, syncedWithGoogle: false } : a));
+      } catch (err) {
+        setGcalError(err instanceof Error ? err.message : 'Falha ao remover evento no Google Agenda.');
+      }
+    }
+
     if (newStatus === 'Realizada' && targetApt.treatmentPlanId) {
       setPlans(prev => prev.map(pln => {
         if (pln.id === targetApt.treatmentPlanId) {
@@ -360,30 +396,109 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return pln;
       }));
 
-      // Atualiza a última visita do paciente
       setPatients(prev => prev.map(p => p.id === targetApt.patientId ? { ...p, lastVisitDate: targetApt.date } : p));
     }
   };
 
-  // GOOGLE CALENDAR
-  const toggleGcalConnection = () => {
-    setGcalConfig(prev => ({
-      ...prev,
-      isConnected: !prev.isConnected,
-      webhookStatus: !prev.isConnected ? 'Ativo (Tempo Real)' : 'Inativo'
-    }));
-    logAudit('Conexão Google Agenda', 'Agendamento', 'gcal', `Integração Google Calendar ${!gcalConfig.isConnected ? 'conectada com sucesso' : 'desconectada'}.`);
+  const connectGoogleCalendar = async () => {
+    setGcalBusy(true);
+    setGcalError(null);
+    try {
+      const session = loadStoredSession();
+      if (!session) {
+        throw new Error('Sessão Google expirada. Faça login novamente.');
+      }
+      setGcalConfig(prev => ({
+        ...prev,
+        isConnected: true,
+        accountEmail: session.profile.email,
+        webhookStatus: 'Ativo (Tempo Real)',
+        lastSyncedAt: new Date().toLocaleString('pt-BR')
+      }));
+      logAudit('Conexão Google Agenda', 'Agendamento', 'gcal', 'Integração Google Calendar conectada.');
+      await syncGcalNowInternal(true);
+    } catch (err) {
+      setGcalError(err instanceof Error ? err.message : 'Falha ao conectar Google Agenda.');
+      throw err;
+    } finally {
+      setGcalBusy(false);
+    }
   };
 
-  const syncGcalNow = () => {
+  const disconnectGoogleCalendar = async () => {
     setGcalConfig(prev => ({
       ...prev,
-      lastSyncedAt: new Date().toLocaleString('pt-BR'),
-      syncedEventsCount: appointments.length
+      isConnected: false,
+      webhookStatus: 'Inativo'
     }));
-    // Garante que todas as sessões não sincronizadas recebam flag
-    setAppointments(prev => prev.map(a => ({ ...a, syncedWithGoogle: true, googleEventId: a.googleEventId || `gcal_evt_${Date.now()}` })));
-    logAudit('Sincronização Manual Google Agenda', 'Agendamento', 'gcal_sync', 'Sincronização bidirecional executada via API Google Calendar OAuth.');
+    logAudit('Conexão Google Agenda', 'Agendamento', 'gcal', 'Integração Google Calendar desconectada (sessão do app mantida).');
+  };
+
+  const syncGcalNowInternal = async (silent = false) => {
+    if (!silent) {
+      setGcalBusy(true);
+      setGcalError(null);
+    }
+    try {
+      const events = await listUpcomingGoogleEvents(90);
+      const knownIds = new Set(appointments.map(a => a.googleEventId).filter(Boolean) as string[]);
+
+      const imported: Appointment[] = [];
+      for (const event of events) {
+        if (!event.id || knownIds.has(event.id)) continue;
+        const schedule = parseGoogleEventSchedule(event);
+        if (!schedule) continue;
+
+        imported.push({
+          id: `apt-gcal-${event.id}`,
+          patientId: '',
+          patientName: event.summary || 'Evento Google Agenda',
+          patientPhone: '',
+          treatmentName: event.summary || 'Google Agenda',
+          professional: currentUser?.name || 'Equipe',
+          room: 'Sala 03 - Consultório 1',
+          date: schedule.date,
+          startTime: schedule.startTime,
+          endTime: schedule.endTime,
+          durationMinutes: 60,
+          status: 'Agendada',
+          syncedWithGoogle: true,
+          googleEventId: event.id,
+          notes: event.description || 'Importado do Google Agenda'
+        });
+      }
+
+      if (imported.length > 0) {
+        setAppointments(prev => [...imported, ...prev]);
+      }
+
+      setGcalConfig(prev => ({
+        ...prev,
+        isConnected: true,
+        lastSyncedAt: new Date().toLocaleString('pt-BR'),
+        syncedEventsCount: events.length,
+        webhookStatus: 'Ativo (Tempo Real)',
+        accountEmail: prev.accountEmail || currentUser?.email || ''
+      }));
+
+      logAudit(
+        'Sincronização Google Agenda',
+        'Agendamento',
+        'gcal_sync',
+        `Sincronização concluída: ${events.length} eventos no período; ${imported.length} novos importados.`
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Falha na sincronização com Google Agenda.';
+      setGcalError(message);
+      setGcalConfig(prev => ({ ...prev, webhookStatus: 'Erro' }));
+      throw err;
+    } finally {
+      if (!silent) setGcalBusy(false);
+    }
+  };
+
+  const syncGcalNow = async () => {
+    await syncGcalNowInternal(false);
   };
 
   const resetData = () => {
@@ -393,13 +508,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.removeItem(`${STORAGE_KEY}_appointments`);
     localStorage.removeItem(`${STORAGE_KEY}_auditLogs`);
     localStorage.removeItem(`${STORAGE_KEY}_gcalConfig`);
+    localStorage.removeItem(`${STORAGE_KEY}_campaigns`);
 
     setPatients(INITIAL_PATIENTS);
     setTreatments(INITIAL_TREATMENTS);
     setPlans(INITIAL_PLANS);
     setAppointments(INITIAL_APPOINTMENTS);
     setAuditLogs(INITIAL_AUDIT_LOGS);
-    setGcalConfig(INITIAL_GCAL_CONFIG);
+    setGcalConfig({
+      ...INITIAL_GCAL_CONFIG,
+      isConnected: Boolean(loadStoredSession()),
+      accountEmail: currentUser?.email || '',
+      webhookStatus: loadStoredSession() ? 'Ativo (Tempo Real)' : 'Inativo'
+    });
   };
 
   return (
@@ -411,6 +532,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       auditLogs,
       gcalConfig,
       campaigns,
+      gcalBusy,
+      gcalError,
       addPatient,
       updatePatient,
       deletePatient,
@@ -420,7 +543,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       createPatientTreatmentPlan,
       addAppointment,
       updateAppointmentStatus,
-      toggleGcalConnection,
+      connectGoogleCalendar,
+      disconnectGoogleCalendar,
       syncGcalNow,
       resetData
     }}>

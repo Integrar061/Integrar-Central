@@ -1,15 +1,14 @@
 import React, { useState } from 'react';
-import { AuthProvider } from './context/AuthContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import { AppProvider, useApp } from './context/AppContext';
 import { Sidebar, ActiveTab } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
+import { LoginPage } from './components/auth/LoginPage';
 
-// Modais Globais
 import { NewPatientModal } from './components/modules/patients/NewPatientModal';
 import { NewAppointmentModal } from './components/modules/agenda/NewAppointmentModal';
 import { NewPatientPlanModal } from './components/modules/treatments/NewPatientPlanModal';
 
-// Módulos
 import { FinancialDashboard } from './components/modules/dashboard/FinancialDashboard';
 import { PatientList } from './components/modules/patients/PatientList';
 import { Patient360View } from './components/modules/patients/Patient360View';
@@ -23,11 +22,7 @@ const MainContent: React.FC = () => {
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-
-  // Seleção de paciente para visão 360°
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
-
-  // Estados dos Modais
   const [isNewPatientModalOpen, setIsNewPatientModalOpen] = useState(false);
   const [isNewAppointmentModalOpen, setIsNewAppointmentModalOpen] = useState(false);
   const [isNewPlanModalOpen, setIsNewPlanModalOpen] = useState(false);
@@ -52,18 +47,16 @@ const MainContent: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex font-sans">
-      {/* Sidebar Navigation */}
       <Sidebar
         activeTab={activeTab}
         setActiveTab={(tab) => {
           setActiveTab(tab);
-          setSelectedPatientId(null); // Limpa seleção ao trocar de aba principal
+          setSelectedPatientId(null);
         }}
         isOpen={isSidebarOpen}
         setIsOpen={setIsSidebarOpen}
       />
 
-      {/* Main Layout Content */}
       <div className="flex-1 flex flex-col lg:pl-64 min-w-0">
         <Header
           onOpenSidebar={() => setIsSidebarOpen(true)}
@@ -73,7 +66,6 @@ const MainContent: React.FC = () => {
         />
 
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">
-          {/* Renderização Condicional por Módulo */}
           {activeTab === 'dashboard' && <FinancialDashboard />}
 
           {activeTab === 'patients' && (
@@ -93,9 +85,7 @@ const MainContent: React.FC = () => {
           )}
 
           {activeTab === 'agenda' && (
-            <AgendaView
-              onOpenNewAppointmentModal={() => handleOpenAppointmentModal()}
-            />
+            <AgendaView onOpenNewAppointmentModal={() => handleOpenAppointmentModal()} />
           )}
 
           {activeTab === 'treatments' && <TreatmentCatalog />}
@@ -106,7 +96,6 @@ const MainContent: React.FC = () => {
         </main>
       </div>
 
-      {/* Modais Globais Reutilizáveis */}
       <NewPatientModal
         isOpen={isNewPatientModalOpen}
         onClose={() => setIsNewPatientModalOpen(false)}
@@ -127,12 +116,32 @@ const MainContent: React.FC = () => {
   );
 };
 
+const AppGate: React.FC = () => {
+  const { isAuthenticated, isAuthLoading } = useAuth();
+
+  if (isAuthLoading) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-300 text-sm font-semibold">
+        Carregando sessão…
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <LoginPage />;
+  }
+
+  return (
+    <AppProvider>
+      <MainContent />
+    </AppProvider>
+  );
+};
+
 export const App: React.FC = () => {
   return (
     <AuthProvider>
-      <AppProvider>
-        <MainContent />
-      </AppProvider>
+      <AppGate />
     </AuthProvider>
   );
 };

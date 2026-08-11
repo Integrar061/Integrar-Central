@@ -2,13 +2,12 @@ import React, { useState } from 'react';
 import { 
   Search, 
   Menu, 
-  Plus, 
-  UserCheck, 
-  ChevronDown, 
   CalendarPlus, 
   UserPlus,
   Phone,
-  CreditCard
+  CreditCard,
+  LogOut,
+  ChevronDown
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useApp } from '../../context/AppContext';
@@ -28,14 +27,15 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenNewAppointmentModal,
   onSelectPatient
 }) => {
-  const { currentUser, switchUserRole } = useAuth();
+  const { currentUser, logout } = useAuth();
   const { patients } = useApp();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchOpen, setIsSearchOpen] = useState(false);
-  const [isRoleDropdownOpen, setIsRoleDropdownOpen] = useState(false);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
 
-  // Filtro dinâmico de pacientes para busca rápida
+  if (!currentUser) return null;
+
   const filteredPatients = searchQuery.trim() === '' ? [] : patients.filter(p => 
     p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     p.cpf.includes(searchQuery) ||
@@ -51,7 +51,6 @@ export const Header: React.FC<HeaderProps> = ({
 
   return (
     <header className="h-16 bg-white/80 backdrop-blur-md border-b border-slate-200/80 sticky top-0 z-30 px-4 sm:px-6 flex items-center justify-between gap-4">
-      {/* Esquerda: Menu Hamburguer (Mobile/Tablet) + Busca Rápida */}
       <div className="flex items-center gap-3 flex-1 max-w-xl">
         <button
           onClick={onOpenSidebar}
@@ -60,7 +59,6 @@ export const Header: React.FC<HeaderProps> = ({
           <Menu className="w-6 h-6" />
         </button>
 
-        {/* Campo de Busca Inteligente (Nome, CPF, Tel) */}
         <div className="relative w-full">
           <div className="relative">
             <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -77,7 +75,6 @@ export const Header: React.FC<HeaderProps> = ({
             />
           </div>
 
-          {/* Autocomplete Dropdown */}
           {isSearchOpen && filteredPatients.length > 0 && (
             <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-2xl shadow-xl border border-slate-200 py-2 z-50 overflow-hidden animate-fade-in">
               <div className="px-3 py-1.5 text-[10px] font-bold uppercase text-slate-400 border-b border-slate-100">
@@ -113,9 +110,7 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       </div>
 
-      {/* Direita: Perfil de Acesso + Ações Rápidas */}
       <div className="flex items-center gap-2 sm:gap-3">
-        {/* Botão de Agendamento Rápido */}
         <Button
           onClick={onOpenNewAppointmentModal}
           variant="primary"
@@ -126,7 +121,6 @@ export const Header: React.FC<HeaderProps> = ({
           Agendar
         </Button>
 
-        {/* Botão de Novo Paciente */}
         <Button
           onClick={onOpenNewPatientModal}
           variant="secondary"
@@ -136,16 +130,16 @@ export const Header: React.FC<HeaderProps> = ({
           <span className="hidden md:inline">Novo</span> Paciente
         </Button>
 
-        {/* Dropdown de Alternar Perfil de Usuário (Simulação de Autenticação) */}
         <div className="relative">
           <button
-            onClick={() => setIsRoleDropdownOpen(!isRoleDropdownOpen)}
+            onClick={() => setIsMenuOpen(!isMenuOpen)}
             className="flex items-center gap-2 p-1.5 sm:px-3 sm:py-1.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 transition-colors text-left"
           >
             <img
-              src={currentUser.avatarUrl}
+              src={currentUser.avatarUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(currentUser.name)}&background=0066FF&color=fff`}
               alt={currentUser.name}
               className="w-7 h-7 rounded-lg object-cover ring-2 ring-brand-500/30"
+              referrerPolicy="no-referrer"
             />
             <div className="hidden xl:block">
               <p className="text-xs font-bold text-slate-900 leading-tight">{currentUser.name}</p>
@@ -156,31 +150,22 @@ export const Header: React.FC<HeaderProps> = ({
             <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
           </button>
 
-          {isRoleDropdownOpen && (
-            <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-2xl shadow-xl border border-slate-200 py-2 z-50 animate-scale-up">
+          {isMenuOpen && (
+            <div className="absolute right-0 top-full mt-2 w-64 bg-white rounded-2xl shadow-xl border border-slate-200 py-2 z-50 animate-scale-up">
               <div className="px-4 py-2 border-b border-slate-100">
-                <p className="text-[10px] font-bold uppercase text-slate-400">Alternar Perfil Ativo</p>
-                <p className="text-xs text-slate-500 mt-0.5">Simule o acesso por nível de permissão:</p>
+                <p className="text-xs font-bold text-slate-900 truncate">{currentUser.name}</p>
+                <p className="text-[11px] text-slate-500 truncate">{currentUser.email}</p>
               </div>
-
-              {(['ADMIN', 'RECEPCAO', 'FINANCEIRO', 'PROFISSIONAL'] as UserRole[]).map((role) => (
-                <button
-                  key={role}
-                  onClick={() => {
-                    switchUserRole(role);
-                    setIsRoleDropdownOpen(false);
-                  }}
-                  className={`w-full px-4 py-2 text-xs font-semibold flex items-center justify-between hover:bg-brand-50 transition-colors ${
-                    currentUser.role === role ? 'text-brand-600 bg-brand-50/60 font-bold' : 'text-slate-700'
-                  }`}
-                >
-                  <span className="flex items-center gap-2">
-                    <UserCheck className="w-3.5 h-3.5" />
-                    {roleLabels[role].title}
-                  </span>
-                  {currentUser.role === role && <span className="w-2 h-2 rounded-full bg-brand-500" />}
-                </button>
-              ))}
+              <button
+                onClick={async () => {
+                  setIsMenuOpen(false);
+                  await logout();
+                }}
+                className="w-full px-4 py-2.5 text-xs font-semibold flex items-center gap-2 text-rose-600 hover:bg-rose-50 transition-colors"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                Sair da conta Google
+              </button>
             </div>
           )}
         </div>

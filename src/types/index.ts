@@ -7,6 +7,7 @@ export interface User {
   role: UserRole;
   avatarUrl?: string;
   specialty?: string;
+  googleId?: string;
 }
 
 export type PatientStatus = 'Lead' | 'Ativo' | 'Em tratamento' | 'Inativo' | 'Ex-paciente';

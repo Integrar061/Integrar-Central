@@ -29,7 +29,7 @@ export const RemarketingCenter: React.FC = () => {
   const inactivePatients = patients.filter(p => {
     if (p.status === 'Ex-paciente') return false;
     const lastVisit = new Date(p.lastVisitDate);
-    const now = new Date('2026-08-11');
+    const now = new Date();
     const diffDays = Math.floor((now.getTime() - lastVisit.getTime()) / (1000 * 3600 * 24));
     return diffDays >= inactiveDaysThreshold;
   });
@@ -37,8 +37,9 @@ export const RemarketingCenter: React.FC = () => {
   // 2. Alertas de Fim de Pacote (restam 1 ou 2 sessões)
   const endingPlans = plans.filter(pln => pln.remainingSessions > 0 && pln.remainingSessions <= 2 && pln.status === 'Ativo');
 
-  // 3. Aniversariantes do Mês (Mês de Agosto - '08')
-  const birthdayPatients = patients.filter(p => p.birthDate && p.birthDate.split('-')[1] === '08');
+  // 3. Aniversariantes do mês atual
+  const currentMonth = String(new Date().getMonth() + 1).padStart(2, '0');
+  const birthdayPatients = patients.filter(p => p.birthDate && p.birthDate.split('-')[1] === currentMonth);
 
   // 4. Funil de Leads não convertidos
   const leadPatients = patients.filter(p => p.status === 'Lead');
@@ -47,7 +48,7 @@ export const RemarketingCenter: React.FC = () => {
   const handleExportSegmentCSV = (dataList: any[], listTitle: string) => {
     const formatted = dataList.map(item => ({
       Nome: item.name || item.patientName,
-      Telefone_WhatsApp: item.phone || '(11) 98765-4321',
+      Telefone_WhatsApp: item.phone || '',
       Email: item.email || 'N/A',
       Status: item.status || 'Ativo',
       Tags: item.tags ? item.tags.join(', ') : ''

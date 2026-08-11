@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Modal } from '../../ui/Modal';
 import { Button } from '../../ui/Button';
 import { useApp } from '../../../context/AppContext';
-import { AppointmentStatus } from '../../../types';
-import { Calendar, Clock, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { useAuth } from '../../../context/AuthContext';
+import { AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react';
 
 interface NewAppointmentModalProps {
   isOpen: boolean;
@@ -17,10 +17,18 @@ export const NewAppointmentModal: React.FC<NewAppointmentModalProps> = ({
   preselectedPatientId
 }) => {
   const { patients, treatments, plans, addAppointment, gcalConfig } = useApp();
+  const { currentUser } = useAuth();
+
+  const professionals = useMemo(() => {
+    const set = new Set<string>();
+    if (currentUser?.name) set.add(currentUser.name);
+    treatments.forEach(t => t.enabledProfessionals.forEach(p => p && set.add(p)));
+    return Array.from(set);
+  }, [treatments, currentUser?.name]);
 
   const [patientId, setPatientId] = useState(preselectedPatientId || '');
-  const [treatmentName, setTreatmentName] = useState(treatments[0]?.name || 'Ozonioterapia Médica');
-  const [professional, setProfessional] = useState('Dr. Fernando Silva');
+  const [treatmentName, setTreatmentName] = useState('');
+  const [professional, setProfessional] = useState(currentUser?.name || '');
   const [room, setRoom] = useState<'Sala 01 - Ozônio' | 'Sala 02 - Estética' | 'Sala 03 - Consultório 1' | 'Sala 04 - Soroterapia'>('Sala 01 - Ozônio');
   
   const todayStr = new Date().toISOString().split('T')[0];
@@ -28,20 +36,31 @@ export const NewAppointmentModal: React.FC<NewAppointmentModalProps> = ({
   const [startTime, setStartTime] = useState('09:00');
   const [durationMinutes, setDurationMinutes] = useState(45);
   const [notes, setNotes] = useState('');
-
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
-  // Atualiza a duração automaticamente de acordo com o tratamento do catálogo
   useEffect(() => {
+    if (!isOpen) return;
     if (preselectedPatientId) setPatientId(preselectedPatientId);
+    if (!treatmentName && treatments[0]) {
+      setTreatmentName(treatments[0].name);
+      setDurationMinutes(treatments[0].durationMinutes);
+    }
+    if (!professional && currentUser?.name) {
+      setProfessional(currentUser.name);
+    }
+  }, [isOpen, preselectedPatientId, treatments, currentUser?.name]);
 
+  useEffect(() => {
     const catalogItem = treatments.find(t => t.name === treatmentName);
     if (catalogItem) {
       setDurationMinutes(catalogItem.durationMinutes);
+      if (catalogItem.enabledProfessionals[0] && !professionals.includes(professional)) {
+        setProfessional(catalogItem.enabledProfessionals[0]);
+      }
     }
-  }, [treatmentName, preselectedPatientId, treatments]);
+  }, [treatmentName, treatments]);
 
-  // Calcula o horário de término automático
   const calculateEndTime = (start: string, duration: number) => {
     const [h, m] = start.split(':').map(Number);
     const totalMin = h * 60 + m + duration;
@@ -52,36 +71,53 @@ export const NewAppointmentModal: React.FC<NewAppointmentModalProps> = ({
 
   const endTime = calculateEndTime(startTime, durationMinutes);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
 
     const patient = patients.find(p => p.id === patientId);
-    if (!patient) return;
+    if (!patient) {
+      setErrorMessage('Selecione um paciente cadastrado.');
+      return;
+    }
+    if (!treatmentName) {
+      setErrorMessage('Cadastre um tratamento no catálogo antes de agendar.');
+      return;
+    }
+    if (!professional.trim()) {
+      setErrorMessage('Informe o profissional responsável.');
+      return;
+    }
 
-    // Busca se existe plano ativo para este tratamento
-    const matchingPlan = plans.find(pln => pln.patientId === patientId && pln.treatmentName === treatmentName && pln.status === 'Ativo');
+    const matchingPlan = plans.find(
+      pln => pln.patientId === patientId && pln.treatmentName === treatmentName && pln.status === 'Ativo'
+    );
 
-    const result = addAppointment({
-      patientId,
-      patientName: patient.name,
-      patientPhone: patient.phone,
-      treatmentPlanId: matchingPlan?.id,
-      treatmentName,
-      professional,
-      room,
-      date,
-      startTime,
-      endTime,
-      durationMinutes,
-      status: 'Confirmada',
-      notes
-    });
+    setSaving(true);
+    try {
+      const result = await addAppointment({
+        patientId,
+        patientName: patient.name,
+        patientPhone: patient.phone,
+        treatmentPlanId: matchingPlan?.id,
+        treatmentName,
+        professional: professional.trim(),
+        room,
+        date,
+        startTime,
+        endTime,
+        durationMinutes,
+        status: 'Confirmada',
+        notes
+      });
 
-    if (!result.success) {
-      setErrorMessage(result.error || 'Erro ao agendar.');
-    } else {
-      onClose();
+      if (!result.success) {
+        setErrorMessage(result.error || 'Erro ao agendar.');
+      } else {
+        onClose();
+      }
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -90,7 +126,7 @@ export const NewAppointmentModal: React.FC<NewAppointmentModalProps> = ({
       isOpen={isOpen}
       onClose={onClose}
       title="Novo Agendamento de Consulta / Sessão"
-      subtitle="Fluxo otimizado para a recepção com validação imediata de conflitos."
+      subtitle="Validação de conflitos e envio opcional ao Google Agenda."
       maxWidth="lg"
     >
       <form onSubmit={handleSubmit} className="space-y-4">
@@ -101,7 +137,18 @@ export const NewAppointmentModal: React.FC<NewAppointmentModalProps> = ({
           </div>
         )}
 
-        {/* Seleção do Paciente */}
+        {patients.length === 0 && (
+          <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs font-semibold">
+            Nenhum paciente cadastrado. Cadastre um paciente antes de agendar.
+          </div>
+        )}
+
+        {treatments.length === 0 && (
+          <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs font-semibold">
+            Catálogo vazio. Cadastre tratamentos em “Catálogo & Planos”.
+          </div>
+        )}
+
         <div>
           <label className="block text-xs font-bold uppercase text-slate-600 mb-1">Paciente *</label>
           <select
@@ -117,7 +164,6 @@ export const NewAppointmentModal: React.FC<NewAppointmentModalProps> = ({
           </select>
         </div>
 
-        {/* Seleção do Tratamento */}
         <div>
           <label className="block text-xs font-bold uppercase text-slate-600 mb-1">Tratamento / Procedimento *</label>
           <select
@@ -126,31 +172,43 @@ export const NewAppointmentModal: React.FC<NewAppointmentModalProps> = ({
             required
             className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-brand-500 outline-none font-medium"
           >
+            <option value="">-- Selecione --</option>
             {treatments.map(t => (
               <option key={t.id} value={t.name}>{t.name} ({t.durationMinutes} min)</option>
             ))}
           </select>
         </div>
 
-        {/* Profissional e Sala */}
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-xs font-bold uppercase text-slate-600 mb-1">Profissional de Saúde *</label>
-            <select
-              value={professional}
-              onChange={(e) => setProfessional(e.target.value)}
-              className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-brand-500 outline-none font-medium"
-            >
-              <option value="Dr. Fernando Silva">Dr. Fernando Silva</option>
-              <option value="Dra. Camila Alencar">Dra. Camila Alencar</option>
-            </select>
+            {professionals.length > 0 ? (
+              <select
+                value={professional}
+                onChange={(e) => setProfessional(e.target.value)}
+                className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-brand-500 outline-none font-medium"
+              >
+                {professionals.map(p => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="text"
+                required
+                value={professional}
+                onChange={(e) => setProfessional(e.target.value)}
+                placeholder="Nome do profissional"
+                className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-brand-500 outline-none font-medium"
+              />
+            )}
           </div>
 
           <div>
             <label className="block text-xs font-bold uppercase text-slate-600 mb-1">Sala / Consultório *</label>
             <select
               value={room}
-              onChange={(e) => setRoom(e.target.value as any)}
+              onChange={(e) => setRoom(e.target.value as typeof room)}
               className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-brand-500 outline-none font-medium"
             >
               <option value="Sala 01 - Ozônio">Sala 01 - Ozônio</option>
@@ -161,7 +219,6 @@ export const NewAppointmentModal: React.FC<NewAppointmentModalProps> = ({
           </div>
         </div>
 
-        {/* Data e Horários */}
         <div className="grid grid-cols-3 gap-3">
           <div>
             <label className="block text-[11px] font-bold text-slate-600 mb-1">Data *</label>
@@ -199,13 +256,20 @@ export const NewAppointmentModal: React.FC<NewAppointmentModalProps> = ({
         {gcalConfig.isConnected && (
           <div className="p-2.5 bg-emerald-50 rounded-xl border border-emerald-100 flex items-center gap-2 text-xs font-bold text-emerald-800">
             <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-            <span>Sincronização bidirecional ativa: Este evento criará uma entrada no Google Agenda.</span>
+            <span>Este agendamento será criado também no Google Agenda ({gcalConfig.accountEmail}).</span>
           </div>
         )}
 
         <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
-          <Button type="button" variant="ghost" onClick={onClose}>Cancelar</Button>
-          <Button type="submit" variant="primary">Confirmar Agendamento</Button>
+          <Button type="button" variant="ghost" onClick={onClose} disabled={saving}>Cancelar</Button>
+          <Button
+            type="submit"
+            variant="primary"
+            disabled={saving || patients.length === 0 || treatments.length === 0}
+            icon={saving ? <Loader2 className="w-4 h-4 animate-spin" /> : undefined}
+          >
+            {saving ? 'Salvando…' : 'Confirmar Agendamento'}
+          </Button>
         </div>
       </form>
     </Modal>

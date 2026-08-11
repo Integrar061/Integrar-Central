@@ -73,11 +73,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <span className={`w-2.5 h-2.5 rounded-full ${gcalConfig.isConnected ? 'bg-emerald-400 animate-ping' : 'bg-slate-500'}`} />
             <div>
               <p className="font-bold text-slate-200 text-[11px]">Google Agenda</p>
-              <p className="text-[10px] text-slate-400 truncate max-w-[120px]">{gcalConfig.isConnected ? 'Sincronizado' : 'Desconectado'}</p>
+              <p className="text-[10px] text-slate-400 truncate max-w-[120px]">
+                {gcalConfig.isConnected ? (gcalConfig.accountEmail || 'Conectado') : 'Desconectado'}
+              </p>
             </div>
           </div>
           {gcalConfig.isConnected && (
-            <RefreshCw className="w-3.5 h-3.5 text-brand-400 animate-spin opacity-80" />
+            <RefreshCw className="w-3.5 h-3.5 text-brand-400 opacity-80" />
           )}
         </div>
 
