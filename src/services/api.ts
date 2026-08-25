@@ -23,15 +23,30 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     ...options.headers
   };
 
-  const response = await fetch(`${API_BASE}${endpoint}`, {
-    ...options,
-    headers
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${endpoint}`, {
+      ...options,
+      headers
+    });
+  } catch (err) {
+    throw new Error('Não foi possível conectar ao servidor. Verifique sua conexão com a internet.');
+  }
 
-  const data = await response.json();
+  const rawText = await response.text();
+  let data: any;
+
+  try {
+    data = rawText ? JSON.parse(rawText) : {};
+  } catch {
+    console.error('Resposta não-JSON recebida da API:', rawText);
+    throw new Error(
+      `O servidor respondeu em formato inválido (${response.status}). Verifique as variáveis de ambiente e o servidor no Vercel.`
+    );
+  }
 
   if (!response.ok) {
-    throw new Error(data.error || 'Erro na comunicação com o servidor.');
+    throw new Error(data.error || `Erro (${response.status}) na comunicação com o servidor.`);
   }
 
   return data as T;
