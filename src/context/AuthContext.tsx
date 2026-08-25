@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { User, UserRole } from '../types';
+import { authApi } from '../services/api';
 import {
   clearSession,
   isGoogleConfigured,
@@ -9,12 +10,22 @@ import {
   StoredGoogleSession
 } from '../lib/googleAuth';
 
+interface RegisterData {
+  name: string;
+  email: string;
+  password: string;
+  role: UserRole;
+  specialty?: string;
+}
+
 interface AuthContextType {
   currentUser: User | null;
   isAuthenticated: boolean;
   isAuthLoading: boolean;
   isGoogleReady: boolean;
   authError: string | null;
+  loginWithEmail: (email: string, password: string) => Promise<void>;
+  registerUser: (data: RegisterData) => Promise<void>;
   loginWithGoogle: () => Promise<void>;
   logout: () => Promise<void>;
   hasPermission: (module: 'PATIENTS_FULL' | 'PATIENTS_VIEW' | 'FINANCIAL' | 'AGENDA_ALL' | 'AGENDA_OWN' | 'TREATMENTS_EDIT' | 'REMARKETING' | 'AUDIT_LOGS') => boolean;
@@ -23,6 +34,7 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const USER_STORAGE_KEY = 'integrar_central_v2_current_user';
+const TOKEN_STORAGE_KEY = 'integrar_central_auth_token';
 
 function sessionToUser(session: StoredGoogleSession): User {
   return {
@@ -42,17 +54,85 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [authError, setAuthError] = useState<string | null>(null);
   const isGoogleReady = isGoogleConfigured();
 
+  // Tenta restaurar sessão no carregamento inicial
   useEffect(() => {
-    const session = loadStoredSession();
-    if (session) {
-      const user = sessionToUser(session);
+    const initAuth = async () => {
+      setIsAuthLoading(true);
+      try {
+        const storedToken = localStorage.getItem(TOKEN_STORAGE_KEY);
+        if (storedToken) {
+          try {
+            const { user } = await authApi.getMe();
+            setCurrentUser(user);
+            localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(user));
+            setIsAuthLoading(false);
+            return;
+          } catch {
+            localStorage.removeItem(TOKEN_STORAGE_KEY);
+          }
+        }
+
+        // Se não houver token de API, checa se tem sessão local ou do Google armazenada
+        const savedUserStr = localStorage.getItem(USER_STORAGE_KEY);
+        if (savedUserStr) {
+          try {
+            const user = JSON.parse(savedUserStr);
+            setCurrentUser(user);
+            setIsAuthLoading(false);
+            return;
+          } catch {
+            localStorage.removeItem(USER_STORAGE_KEY);
+          }
+        }
+
+        const session = loadStoredSession();
+        if (session) {
+          const user = sessionToUser(session);
+          setCurrentUser(user);
+          localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(user));
+        }
+      } catch {
+        // Erro silencioso de restauração
+      } finally {
+        setIsAuthLoading(false);
+      }
+    };
+
+    initAuth();
+  }, []);
+
+  const loginWithEmail = useCallback(async (email: string, password: string) => {
+    setAuthError(null);
+    setIsAuthLoading(true);
+    try {
+      const { user, token } = await authApi.login({ email, password });
       setCurrentUser(user);
+      localStorage.setItem(TOKEN_STORAGE_KEY, token);
       localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(user));
-    } else {
-      // Sem token válido: limpa usuário persistido de sessões antigas
-      localStorage.removeItem(USER_STORAGE_KEY);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Falha ao realizar login.';
+      setAuthError(message);
+      throw err;
+    } finally {
+      setIsAuthLoading(false);
     }
-    setIsAuthLoading(false);
+  }, []);
+
+  const registerUser = useCallback(async (data: RegisterData) => {
+    setAuthError(null);
+    setIsAuthLoading(true);
+    try {
+      const { user, token } = await authApi.register(data);
+      setCurrentUser(user);
+      localStorage.setItem(TOKEN_STORAGE_KEY, token);
+      localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(user));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Falha ao criar conta.';
+      setAuthError(message);
+      throw err;
+    } finally {
+      setIsAuthLoading(false);
+    }
   }, []);
 
   const loginWithGoogle = useCallback(async () => {
@@ -75,9 +155,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const logout = useCallback(async () => {
     try {
       await revokeGoogleAccess();
+    } catch {
+      // Ignora erros no logout do Google
     } finally {
       clearSession();
       setCurrentUser(null);
+      localStorage.removeItem(TOKEN_STORAGE_KEY);
       localStorage.removeItem(USER_STORAGE_KEY);
     }
   }, []);
@@ -115,6 +198,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isAuthLoading,
         isGoogleReady,
         authError,
+        loginWithEmail,
+        registerUser,
         loginWithGoogle,
         logout,
         hasPermission
@@ -131,5 +216,4 @@ export const useAuth = () => {
   return context;
 };
 
-// Mantém o tipo exportado para usos futuros de papéis
 export type { UserRole };
