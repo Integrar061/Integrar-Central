@@ -3,7 +3,6 @@ import cors from 'cors';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { isSupabaseConfigured, supabaseDb } from '../server/supabaseDb.js';
-import { dbAll, dbGet, dbRun, initDb } from '../server/db.js';
 
 const app = express();
 const JWT_SECRET = process.env.JWT_SECRET || 'integrar_central_secret_key_2026';
@@ -17,7 +16,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// Memória em tempo de execução para fallback em ambiente Serverless se nenhum banco estiver configurado
+// Armazenamento em memória para fallback se as variáveis do Supabase não estiverem preenchidas
 const memoryStore = {
   users: [],
   patients: [],
@@ -40,15 +39,6 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
-// Tenta inicializar o SQLite em ambiente local se disponível
-try {
-  initDb().catch(() => {
-    // SQLite não disponível em serverless Vercel, ignora silenciosamente
-  });
-} catch {
-  // Ignora falha de SQLite no Vercel
-}
-
 // ==================== AUTH ROUTES ====================
 
 app.post('/api/auth/register', async (req, res) => {
@@ -59,18 +49,12 @@ app.post('/api/auth/register', async (req, res) => {
     }
 
     const cleanEmail = email.toLowerCase().trim();
-
-    // 1. Tenta buscar no Supabase
     let existingUser = null;
+
     if (isSupabaseConfigured()) {
       existingUser = await supabaseDb.getUserByEmail(cleanEmail);
     } else {
-      // 2. Tenta SQLite ou Memória
-      try {
-        existingUser = await dbGet('SELECT * FROM users WHERE email = ?', [cleanEmail]);
-      } catch {
-        existingUser = memoryStore.users.find(u => u.email === cleanEmail);
-      }
+      existingUser = memoryStore.users.find(u => u.email === cleanEmail);
     }
 
     if (existingUser) {
@@ -94,15 +78,7 @@ app.post('/api/auth/register', async (req, res) => {
     if (isSupabaseConfigured()) {
       await supabaseDb.createUser(newUserObj);
     } else {
-      try {
-        await dbRun(
-          `INSERT INTO users (id, name, email, password_hash, role, specialty, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          [userId, name, cleanEmail, password_hash, role, specialty, createdAt]
-        );
-      } catch {
-        memoryStore.users.push(newUserObj);
-      }
+      memoryStore.users.push(newUserObj);
     }
 
     const user = { id: userId, name, email: cleanEmail, role, specialty };
@@ -128,11 +104,7 @@ app.post('/api/auth/login', async (req, res) => {
     if (isSupabaseConfigured()) {
       dbUser = await supabaseDb.getUserByEmail(cleanEmail);
     } else {
-      try {
-        dbUser = await dbGet('SELECT * FROM users WHERE email = ?', [cleanEmail]);
-      } catch {
-        dbUser = memoryStore.users.find(u => u.email === cleanEmail);
-      }
+      dbUser = memoryStore.users.find(u => u.email === cleanEmail);
     }
 
     if (!dbUser) {
@@ -168,11 +140,7 @@ app.get('/api/auth/me', authenticateToken, async (req, res) => {
     if (isSupabaseConfigured()) {
       dbUser = await supabaseDb.getUserById(req.user.id);
     } else {
-      try {
-        dbUser = await dbGet('SELECT id, name, email, role, specialty, google_id FROM users WHERE id = ?', [req.user.id]);
-      } catch {
-        dbUser = memoryStore.users.find(u => u.id === req.user.id);
-      }
+      dbUser = memoryStore.users.find(u => u.id === req.user.id);
     }
 
     if (!dbUser) {
@@ -202,32 +170,7 @@ app.get('/api/patients', async (req, res) => {
       const data = await supabaseDb.getPatients();
       return res.json(data || []);
     }
-    try {
-      const rows = await dbAll('SELECT * FROM patients ORDER BY rowid DESC');
-      const patients = rows.map(r => ({
-        id: r.id,
-        name: r.name,
-        cpf: r.cpf || '',
-        birthDate: r.birth_date || '',
-        phone: r.phone || '',
-        email: r.email || '',
-        address: r.address || '',
-        origin: r.origin || 'Outros',
-        status: r.status || 'Lead',
-        notes: r.notes || '',
-        attachments: r.attachments ? JSON.parse(r.attachments) : [],
-        timeline: r.timeline ? JSON.parse(r.timeline) : [],
-        firstVisitDate: r.first_visit_date || '',
-        lastVisitDate: r.last_visit_date || '',
-        churnRisk: Boolean(r.churn_risk),
-        churnRiskReason: r.churn_risk_reason || undefined,
-        followUpDays: r.follow_up_days || undefined,
-        tags: r.tags ? JSON.parse(r.tags) : []
-      }));
-      return res.json(patients);
-    } catch {
-      return res.json(memoryStore.patients);
-    }
+    return res.json(memoryStore.patients);
   } catch (err) {
     return res.status(500).json({ error: 'Erro ao carregar lista de pacientes.' });
   }
@@ -239,34 +182,7 @@ app.post('/api/patients', async (req, res) => {
     if (isSupabaseConfigured()) {
       await supabaseDb.createPatient(p);
     } else {
-      try {
-        await dbRun(
-          `INSERT INTO patients (id, name, cpf, birth_date, phone, email, address, origin, status, notes, attachments, timeline, first_visit_date, last_visit_date, churn_risk, churn_risk_reason, follow_up_days, tags)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            p.id,
-            p.name,
-            p.cpf || '',
-            p.birthDate || '',
-            p.phone || '',
-            p.email || '',
-            p.address || '',
-            p.origin || 'Outros',
-            p.status || 'Lead',
-            p.notes || '',
-            JSON.stringify(p.attachments || []),
-            JSON.stringify(p.timeline || []),
-            p.firstVisitDate || '',
-            p.lastVisitDate || '',
-            p.churnRisk ? 1 : 0,
-            p.churnRiskReason || null,
-            p.followUpDays || null,
-            JSON.stringify(p.tags || [])
-          ]
-        );
-      } catch {
-        memoryStore.patients.unshift(p);
-      }
+      memoryStore.patients.unshift(p);
     }
     return res.status(201).json({ success: true, patient: p });
   } catch (err) {
@@ -281,38 +197,7 @@ app.put('/api/patients/:id', async (req, res) => {
     if (isSupabaseConfigured()) {
       await supabaseDb.updatePatient(p);
     } else {
-      try {
-        await dbRun(
-          `UPDATE patients SET
-            name = ?, cpf = ?, birth_date = ?, phone = ?, email = ?, address = ?,
-            origin = ?, status = ?, notes = ?, attachments = ?, timeline = ?,
-            first_visit_date = ?, last_visit_date = ?, churn_risk = ?, churn_risk_reason = ?,
-            follow_up_days = ?, tags = ?
-           WHERE id = ?`,
-          [
-            p.name,
-            p.cpf || '',
-            p.birthDate || '',
-            p.phone || '',
-            p.email || '',
-            p.address || '',
-            p.origin || 'Outros',
-            p.status || 'Lead',
-            p.notes || '',
-            JSON.stringify(p.attachments || []),
-            JSON.stringify(p.timeline || []),
-            p.firstVisitDate || '',
-            p.lastVisitDate || '',
-            p.churnRisk ? 1 : 0,
-            p.churnRiskReason || null,
-            p.followUpDays || null,
-            JSON.stringify(p.tags || []),
-            id
-          ]
-        );
-      } catch {
-        memoryStore.patients = memoryStore.patients.map(item => item.id === id ? p : item);
-      }
+      memoryStore.patients = memoryStore.patients.map(item => item.id === id ? p : item);
     }
     return res.json({ success: true });
   } catch (err) {
@@ -326,11 +211,7 @@ app.delete('/api/patients/:id', async (req, res) => {
     if (isSupabaseConfigured()) {
       await supabaseDb.deletePatient(id);
     } else {
-      try {
-        await dbRun('DELETE FROM patients WHERE id = ?', [id]);
-      } catch {
-        memoryStore.patients = memoryStore.patients.filter(item => item.id !== id);
-      }
+      memoryStore.patients = memoryStore.patients.filter(item => item.id !== id);
     }
     return res.json({ success: true });
   } catch (err) {
@@ -342,31 +223,19 @@ app.post('/api/patients/:id/timeline', async (req, res) => {
   try {
     const { id } = req.params;
     const item = req.body;
-    let currentTimeline = [];
 
     if (isSupabaseConfigured()) {
       const patient = await supabaseDb.getPatients().then(list => list.find(p => p.id === id));
       if (patient) {
-        currentTimeline = patient.timeline || [];
-        const updatedTimeline = [item, ...currentTimeline];
+        const updatedTimeline = [item, ...(patient.timeline || [])];
         await supabaseDb.updatePatient({ ...patient, timeline: updatedTimeline });
         return res.json({ success: true, timeline: updatedTimeline });
       }
     } else {
-      try {
-        const row = await dbGet('SELECT timeline FROM patients WHERE id = ?', [id]);
-        if (row) {
-          currentTimeline = row.timeline ? JSON.parse(row.timeline) : [];
-          const updatedTimeline = [item, ...currentTimeline];
-          await dbRun('UPDATE patients SET timeline = ? WHERE id = ?', [JSON.stringify(updatedTimeline), id]);
-          return res.json({ success: true, timeline: updatedTimeline });
-        }
-      } catch {
-        const target = memoryStore.patients.find(p => p.id === id);
-        if (target) {
-          target.timeline = [item, ...(target.timeline || [])];
-          return res.json({ success: true, timeline: target.timeline });
-        }
+      const target = memoryStore.patients.find(p => p.id === id);
+      if (target) {
+        target.timeline = [item, ...(target.timeline || [])];
+        return res.json({ success: true, timeline: target.timeline });
       }
     }
 
@@ -384,23 +253,7 @@ app.get('/api/treatments', async (req, res) => {
       const data = await supabaseDb.getTreatments();
       return res.json(data || []);
     }
-    try {
-      const rows = await dbAll('SELECT * FROM treatments');
-      const items = rows.map(r => ({
-        id: r.id,
-        name: r.name,
-        category: r.category,
-        pricePerSession: r.price_per_session,
-        defaultSessions: r.default_sessions,
-        totalPackagePrice: r.total_package_price,
-        durationMinutes: r.duration_minutes,
-        enabledProfessionals: r.enabled_professionals ? JSON.parse(r.enabled_professionals) : [],
-        active: Boolean(r.active)
-      }));
-      return res.json(items);
-    } catch {
-      return res.json(memoryStore.treatments);
-    }
+    return res.json(memoryStore.treatments);
   } catch (err) {
     return res.status(500).json({ error: 'Erro ao buscar tratamentos.' });
   }
@@ -412,25 +265,7 @@ app.post('/api/treatments', async (req, res) => {
     if (isSupabaseConfigured()) {
       await supabaseDb.createTreatment(t);
     } else {
-      try {
-        await dbRun(
-          `INSERT INTO treatments (id, name, category, price_per_session, default_sessions, total_package_price, duration_minutes, enabled_professionals, active)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            t.id,
-            t.name,
-            t.category,
-            t.pricePerSession,
-            t.defaultSessions,
-            t.totalPackagePrice,
-            t.durationMinutes,
-            JSON.stringify(t.enabledProfessionals || []),
-            t.active !== false ? 1 : 0
-          ]
-        );
-      } catch {
-        memoryStore.treatments.push(t);
-      }
+      memoryStore.treatments.push(t);
     }
     return res.status(201).json({ success: true, item: t });
   } catch (err) {
@@ -445,27 +280,7 @@ app.put('/api/treatments/:id', async (req, res) => {
     if (isSupabaseConfigured()) {
       await supabaseDb.updateTreatment(t);
     } else {
-      try {
-        await dbRun(
-          `UPDATE treatments SET
-            name = ?, category = ?, price_per_session = ?, default_sessions = ?,
-            total_package_price = ?, duration_minutes = ?, enabled_professionals = ?, active = ?
-           WHERE id = ?`,
-          [
-            t.name,
-            t.category,
-            t.pricePerSession,
-            t.defaultSessions,
-            t.totalPackagePrice,
-            t.durationMinutes,
-            JSON.stringify(t.enabledProfessionals || []),
-            t.active !== false ? 1 : 0,
-            id
-          ]
-        );
-      } catch {
-        memoryStore.treatments = memoryStore.treatments.map(item => item.id === id ? t : item);
-      }
+      memoryStore.treatments = memoryStore.treatments.map(item => item.id === id ? t : item);
     }
     return res.json({ success: true });
   } catch (err) {
@@ -481,32 +296,7 @@ app.get('/api/plans', async (req, res) => {
       const data = await supabaseDb.getPlans();
       return res.json(data || []);
     }
-    try {
-      const rows = await dbAll('SELECT * FROM plans ORDER BY rowid DESC');
-      const plans = rows.map(r => ({
-        id: r.id,
-        patientId: r.patient_id,
-        patientName: r.patient_name,
-        treatmentCatalogId: r.treatment_catalog_id,
-        treatmentName: r.treatment_name,
-        category: r.category,
-        sessionPrice: r.session_price,
-        totalSessions: r.total_sessions,
-        completedSessions: r.completed_sessions,
-        remainingSessions: r.remaining_sessions,
-        discountPercent: r.discount_percent,
-        totalAmount: r.total_amount,
-        paidAmount: r.paid_amount,
-        openBalance: r.open_balance,
-        createdAt: r.created_at,
-        createdBy: r.created_by,
-        updatedAt: r.updated_at,
-        status: r.status
-      }));
-      return res.json(plans);
-    } catch {
-      return res.json(memoryStore.plans);
-    }
+    return res.json(memoryStore.plans);
   } catch (err) {
     return res.status(500).json({ error: 'Erro ao carregar planos.' });
   }
@@ -518,34 +308,7 @@ app.post('/api/plans', async (req, res) => {
     if (isSupabaseConfigured()) {
       await supabaseDb.createPlan(p);
     } else {
-      try {
-        await dbRun(
-          `INSERT INTO plans (id, patient_id, patient_name, treatment_catalog_id, treatment_name, category, session_price, total_sessions, completed_sessions, remaining_sessions, discount_percent, total_amount, paid_amount, open_balance, created_at, created_by, updated_at, status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            p.id,
-            p.patientId,
-            p.patientName,
-            p.treatmentCatalogId,
-            p.treatmentName,
-            p.category,
-            p.sessionPrice,
-            p.totalSessions,
-            p.completedSessions || 0,
-            p.remainingSessions,
-            p.discountPercent || 0,
-            p.totalAmount,
-            p.paidAmount || 0,
-            p.openBalance,
-            p.createdAt,
-            p.createdBy,
-            p.updatedAt,
-            p.status || 'Ativo'
-          ]
-        );
-      } catch {
-        memoryStore.plans.unshift(p);
-      }
+      memoryStore.plans.unshift(p);
     }
     return res.status(201).json({ success: true, plan: p });
   } catch (err) {
@@ -560,16 +323,7 @@ app.put('/api/plans/:id', async (req, res) => {
     if (isSupabaseConfigured()) {
       await supabaseDb.updatePlan(p);
     } else {
-      try {
-        await dbRun(
-          `UPDATE plans SET
-            completed_sessions = ?, remaining_sessions = ?, status = ?, updated_at = ?
-           WHERE id = ?`,
-          [p.completedSessions, p.remainingSessions, p.status, p.updatedAt || new Date().toISOString().split('T')[0], id]
-        );
-      } catch {
-        memoryStore.plans = memoryStore.plans.map(item => item.id === id ? p : item);
-      }
+      memoryStore.plans = memoryStore.plans.map(item => item.id === id ? p : item);
     }
     return res.json({ success: true });
   } catch (err) {
@@ -585,30 +339,7 @@ app.get('/api/appointments', async (req, res) => {
       const data = await supabaseDb.getAppointments();
       return res.json(data || []);
     }
-    try {
-      const rows = await dbAll('SELECT * FROM appointments ORDER BY date DESC, start_time ASC');
-      const appointments = rows.map(r => ({
-        id: r.id,
-        patientId: r.patient_id || '',
-        patientName: r.patient_name,
-        patientPhone: r.patient_phone || '',
-        treatmentPlanId: r.treatment_plan_id || undefined,
-        treatmentName: r.treatment_name,
-        professional: r.professional,
-        room: r.room,
-        date: r.date,
-        startTime: r.start_time,
-        endTime: r.end_time,
-        durationMinutes: r.duration_minutes,
-        status: r.status,
-        syncedWithGoogle: Boolean(r.synced_with_google),
-        googleEventId: r.google_event_id || undefined,
-        notes: r.notes || undefined
-      }));
-      return res.json(appointments);
-    } catch {
-      return res.json(memoryStore.appointments);
-    }
+    return res.json(memoryStore.appointments);
   } catch (err) {
     return res.status(500).json({ error: 'Erro ao buscar agendamentos.' });
   }
@@ -620,32 +351,7 @@ app.post('/api/appointments', async (req, res) => {
     if (isSupabaseConfigured()) {
       await supabaseDb.createAppointment(a);
     } else {
-      try {
-        await dbRun(
-          `INSERT INTO appointments (id, patient_id, patient_name, patient_phone, treatment_plan_id, treatment_name, professional, room, date, start_time, end_time, duration_minutes, status, synced_with_google, google_event_id, notes)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            a.id,
-            a.patientId || '',
-            a.patientName,
-            a.patientPhone || '',
-            a.treatmentPlanId || null,
-            a.treatmentName,
-            a.professional,
-            a.room,
-            a.date,
-            a.startTime,
-            a.endTime,
-            a.durationMinutes,
-            a.status || 'Agendada',
-            a.syncedWithGoogle ? 1 : 0,
-            a.googleEventId || null,
-            a.notes || null
-          ]
-        );
-      } catch {
-        memoryStore.appointments.unshift(a);
-      }
+      memoryStore.appointments.unshift(a);
     }
     return res.status(201).json({ success: true, appointment: a });
   } catch (err) {
@@ -660,14 +366,7 @@ app.put('/api/appointments/:id/status', async (req, res) => {
     if (isSupabaseConfigured()) {
       await supabaseDb.updateAppointmentStatus(id, status, syncedWithGoogle);
     } else {
-      try {
-        await dbRun(
-          `UPDATE appointments SET status = ?, synced_with_google = ? WHERE id = ?`,
-          [status, syncedWithGoogle !== undefined ? (syncedWithGoogle ? 1 : 0) : 1, id]
-        );
-      } catch {
-        memoryStore.appointments = memoryStore.appointments.map(item => item.id === id ? { ...item, status, syncedWithGoogle } : item);
-      }
+      memoryStore.appointments = memoryStore.appointments.map(item => item.id === id ? { ...item, status, syncedWithGoogle } : item);
     }
     return res.json({ success: true });
   } catch (err) {
@@ -683,24 +382,7 @@ app.get('/api/audit-logs', async (req, res) => {
       const data = await supabaseDb.getAuditLogs();
       return res.json(data || []);
     }
-    try {
-      const rows = await dbAll('SELECT * FROM audit_logs ORDER BY rowid DESC LIMIT 200');
-      const logs = rows.map(r => ({
-        id: r.id,
-        timestamp: r.timestamp,
-        userName: r.user_name,
-        userRole: r.user_role,
-        action: r.action,
-        entity: r.entity,
-        targetId: r.target_id,
-        previousValue: r.previous_value || undefined,
-        newValue: r.new_value || undefined,
-        details: r.details
-      }));
-      return res.json(logs);
-    } catch {
-      return res.json(memoryStore.auditLogs);
-    }
+    return res.json(memoryStore.auditLogs);
   } catch (err) {
     return res.status(500).json({ error: 'Erro ao carregar logs.' });
   }
@@ -712,26 +394,7 @@ app.post('/api/audit-logs', async (req, res) => {
     if (isSupabaseConfigured()) {
       await supabaseDb.createAuditLog(l);
     } else {
-      try {
-        await dbRun(
-          `INSERT INTO audit_logs (id, timestamp, user_name, user_role, action, entity, target_id, previous_value, new_value, details)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            l.id,
-            l.timestamp,
-            l.userName,
-            l.userRole,
-            l.action,
-            l.entity,
-            l.targetId,
-            l.previousValue || null,
-            l.newValue || null,
-            l.details
-          ]
-        );
-      } catch {
-        memoryStore.auditLogs.unshift(l);
-      }
+      memoryStore.auditLogs.unshift(l);
     }
     return res.status(201).json({ success: true });
   } catch (err) {
