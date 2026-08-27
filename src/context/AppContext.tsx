@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { 
   Patient, 
   TreatmentCatalogItem, 
@@ -28,6 +28,7 @@ import {
   parseGoogleEventSchedule
 } from '../lib/googleCalendar';
 import {
+<<<<<<< HEAD
   isSupabaseConfigured,
   fetchPatientsFromSupabase,
   insertPatientToSupabase,
@@ -49,6 +50,14 @@ export interface ImportLeadPayload {
   date?: string;
   whatsappLink?: string;
 }
+=======
+  patientsApi,
+  treatmentsApi,
+  plansApi,
+  appointmentsApi,
+  auditLogsApi
+} from '../services/api';
+>>>>>>> f95d33561762d84fcb792c412714453f9488e613
 
 interface AppContextType {
   patients: Patient[];
@@ -61,15 +70,23 @@ interface AppContextType {
   campaigns: CampaignHistory[];
   gcalBusy: boolean;
   gcalError: string | null;
+  isLoadingData: boolean;
   
+<<<<<<< HEAD
   addPatient: (patientData: Omit<Patient, 'id' | 'timeline' | 'attachments' | 'firstVisitDate' | 'lastVisitDate' | 'churnRisk'>) => Promise<Patient>;
   updatePatient: (patient: Patient) => Promise<void>;
   deletePatient: (id: string) => Promise<void>;
   bulkImportLeads: (leads: ImportLeadPayload[], strategy: 'skip' | 'update' | 'create_anyway') => Promise<{ imported: number; updated: number; skipped: number; failed: number }>;
   addTimelineItem: (patientId: string, type: TimelineItem['type'], title: string, description: string) => void;
+=======
+  addPatient: (patientData: Omit<Patient, 'id' | 'timeline' | 'attachments' | 'firstVisitDate' | 'lastVisitDate' | 'churnRisk'>) => Promise<void>;
+  updatePatient: (patient: Patient) => Promise<void>;
+  deletePatient: (id: string) => Promise<void>;
+  addTimelineItem: (patientId: string, type: TimelineItem['type'], title: string, description: string) => Promise<void>;
+>>>>>>> f95d33561762d84fcb792c412714453f9488e613
   
-  addTreatmentCatalogItem: (item: Omit<TreatmentCatalogItem, 'id'>) => void;
-  updateTreatmentCatalogItem: (item: TreatmentCatalogItem) => void;
+  addTreatmentCatalogItem: (item: Omit<TreatmentCatalogItem, 'id'>) => Promise<void>;
+  updateTreatmentCatalogItem: (item: TreatmentCatalogItem) => Promise<void>;
   
   createPatientTreatmentPlan: (
     patientId: string, 
@@ -78,7 +95,7 @@ interface AppContextType {
     totalSessions: number, 
     discountPercent: number,
     notes?: string
-  ) => void;
+  ) => Promise<void>;
   
   addAppointment: (appointment: Omit<Appointment, 'id' | 'syncedWithGoogle' | 'googleEventId'>) => Promise<{ success: boolean; error?: string }>;
   updateAppointmentStatus: (id: string, newStatus: AppointmentStatus) => Promise<void>;
@@ -88,6 +105,7 @@ interface AppContextType {
   syncGcalNow: () => Promise<void>;
   
   resetData: () => void;
+  refreshData: () => Promise<void>;
 }
 
 const STORAGE_KEY = 'integrar_central_v2_store';
@@ -129,9 +147,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [campaigns] = useState<CampaignHistory[]>(() =>
     readStore(`${STORAGE_KEY}_campaigns`, INITIAL_CAMPAIGNS)
   );
+  
   const [gcalBusy, setGcalBusy] = useState(false);
   const [gcalError, setGcalError] = useState<string | null>(null);
+  const [isLoadingData, setIsLoadingData] = useState(false);
 
+<<<<<<< HEAD
   // Carregamento inicial do Supabase (SELECT na tabela patients)
   useEffect(() => {
     let isMounted = true;
@@ -155,6 +176,53 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return () => { isMounted = false; };
   }, []);
 
+=======
+  // Função para carregar todos os dados do banco SQLite backend
+  const loadDataFromApi = useCallback(async () => {
+    if (!currentUser) return;
+    setIsLoadingData(true);
+    try {
+      const [fetchedPatients, fetchedTreatments, fetchedPlans, fetchedAppointments, fetchedLogs] = await Promise.all([
+        patientsApi.getAll().catch(() => null),
+        treatmentsApi.getAll().catch(() => null),
+        plansApi.getAll().catch(() => null),
+        appointmentsApi.getAll().catch(() => null),
+        auditLogsApi.getAll().catch(() => null)
+      ]);
+
+      if (fetchedPatients) {
+        setPatients(fetchedPatients);
+        localStorage.setItem(`${STORAGE_KEY}_patients`, JSON.stringify(fetchedPatients));
+      }
+      if (fetchedTreatments) {
+        setTreatments(fetchedTreatments);
+        localStorage.setItem(`${STORAGE_KEY}_treatments`, JSON.stringify(fetchedTreatments));
+      }
+      if (fetchedPlans) {
+        setPlans(fetchedPlans);
+        localStorage.setItem(`${STORAGE_KEY}_plans`, JSON.stringify(fetchedPlans));
+      }
+      if (fetchedAppointments) {
+        setAppointments(fetchedAppointments);
+        localStorage.setItem(`${STORAGE_KEY}_appointments`, JSON.stringify(fetchedAppointments));
+      }
+      if (fetchedLogs) {
+        setAuditLogs(fetchedLogs);
+        localStorage.setItem(`${STORAGE_KEY}_auditLogs`, JSON.stringify(fetchedLogs));
+      }
+    } catch (err) {
+      console.warn('Usando armazenamento local como fallback:', err);
+    } finally {
+      setIsLoadingData(false);
+    }
+  }, [currentUser]);
+
+  useEffect(() => {
+    loadDataFromApi();
+  }, [loadDataFromApi]);
+
+  // Persistência secundária no localStorage para acesso offline rápido
+>>>>>>> f95d33561762d84fcb792c412714453f9488e613
   useEffect(() => {
     localStorage.setItem(`${STORAGE_KEY}_patients`, JSON.stringify(patients));
   }, [patients]);
@@ -179,7 +247,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem(`${STORAGE_KEY}_gcalConfig`, JSON.stringify(gcalConfig));
   }, [gcalConfig]);
 
-  // Ao logar, alinha o status da Agenda com a sessão Google ativa
+  // Ao logar com Google, alinha status da Agenda
   useEffect(() => {
     if (!currentUser) return;
     const session = loadStoredSession();
@@ -193,7 +261,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [currentUser?.id]);
 
-  const logAudit = (action: string, entity: AuditLog['entity'], targetId: string, details: string, previousValue?: string, newValue?: string) => {
+  const logAudit = async (action: string, entity: AuditLog['entity'], targetId: string, details: string, previousValue?: string, newValue?: string) => {
     if (!currentUser) return;
     const newLog: AuditLog = {
       id: `log-${Date.now()}`,
@@ -208,6 +276,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       newValue
     };
     setAuditLogs(prev => [newLog, ...prev]);
+    try {
+      await auditLogsApi.create(newLog);
+    } catch {
+      // Ignora erro de auditoria offline
+    }
   };
 
   const addPatient: AppContextType['addPatient'] = async (data) => {
@@ -235,6 +308,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // Atualiza estado local e localStorage imediatamente
     setPatients(prev => [newPatient, ...prev]);
+<<<<<<< HEAD
     logAudit('Novo Cadastro de Paciente', 'Paciente', newId, `Paciente ${data.name} cadastrado com sucesso.`);
 
     // Persiste no Supabase assincronamente se configurado
@@ -247,10 +321,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     return newPatient;
+=======
+    try {
+      await patientsApi.create(newPatient);
+    } catch (err) {
+      console.error('Erro ao salvar no banco:', err);
+    }
+
+    await logAudit('Novo Cadastro de Paciente', 'Paciente', newId, `Paciente ${data.name} cadastrado com sucesso.`);
+>>>>>>> f95d33561762d84fcb792c412714453f9488e613
   };
 
   const updatePatient = async (updated: Patient) => {
     setPatients(prev => prev.map(p => p.id === updated.id ? updated : p));
+<<<<<<< HEAD
     logAudit('Atualização de Dados do Paciente', 'Paciente', updated.id, `Dados cadastrais do paciente ${updated.name} alterados.`);
 
     if (isSupabaseConfigured()) {
@@ -260,13 +344,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         console.error('Erro ao atualizar paciente no Supabase:', err);
       }
     }
+=======
+    try {
+      await patientsApi.update(updated);
+    } catch (err) {
+      console.error('Erro ao atualizar no banco:', err);
+    }
+    await logAudit('Atualização de Dados do Paciente', 'Paciente', updated.id, `Dados cadastrais do paciente ${updated.name} alterados.`);
+>>>>>>> f95d33561762d84fcb792c412714453f9488e613
   };
 
   const deletePatient = async (id: string) => {
     const target = patients.find(p => p.id === id);
     setPatients(prev => prev.filter(p => p.id !== id));
+    try {
+      await patientsApi.delete(id);
+    } catch (err) {
+      console.error('Erro ao remover no banco:', err);
+    }
     if (target) {
-      logAudit('Exclusão de Cadastro de Paciente', 'Paciente', id, `Exclusão do registro do paciente ${target.name}.`);
+      await logAudit('Exclusão de Cadastro de Paciente', 'Paciente', id, `Exclusão do registro do paciente ${target.name}.`);
     }
 
     if (isSupabaseConfigured()) {
@@ -397,7 +494,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   };
 
-  const addTimelineItem = (patientId: string, type: TimelineItem['type'], title: string, description: string) => {
+  const addTimelineItem = async (patientId: string, type: TimelineItem['type'], title: string, description: string) => {
     const today = new Date().toISOString().split('T')[0];
     const newItem: TimelineItem = {
       id: `tl-${Date.now()}`,
@@ -415,19 +512,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       return p;
     }));
+
+    try {
+      await patientsApi.addTimelineItem(patientId, newItem);
+    } catch (err) {
+      console.error('Erro ao adicionar timeline no banco:', err);
+    }
   };
 
-  const addTreatmentCatalogItem = (data: Omit<TreatmentCatalogItem, 'id'>) => {
+  const addTreatmentCatalogItem = async (data: Omit<TreatmentCatalogItem, 'id'>) => {
     const newId = `trt-${Date.now()}`;
     const newItem: TreatmentCatalogItem = { ...data, id: newId };
     setTreatments(prev => [...prev, newItem]);
-    logAudit('Adicionado Novo Tratamento ao Catálogo', 'Catálogo', newId, `Tratamento ${data.name} cadastrado no catálogo mestre.`);
+    try {
+      await treatmentsApi.create(newItem);
+    } catch (err) {
+      console.error('Erro ao salvar tratamento no banco:', err);
+    }
+    await logAudit('Adicionado Novo Tratamento ao Catálogo', 'Catálogo', newId, `Tratamento ${data.name} cadastrado no catálogo mestre.`);
   };
 
-  const updateTreatmentCatalogItem = (updated: TreatmentCatalogItem) => {
+  const updateTreatmentCatalogItem = async (updated: TreatmentCatalogItem) => {
     const oldItem = treatments.find(t => t.id === updated.id);
     setTreatments(prev => prev.map(t => t.id === updated.id ? updated : t));
-    logAudit(
+    try {
+      await treatmentsApi.update(updated);
+    } catch (err) {
+      console.error('Erro ao atualizar tratamento no banco:', err);
+    }
+    await logAudit(
       'Edição do Catálogo Mestre de Tratamento', 
       'Catálogo', 
       updated.id, 
@@ -437,7 +550,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
   };
 
-  const createPatientTreatmentPlan: AppContextType['createPatientTreatmentPlan'] = (
+  const createPatientTreatmentPlan: AppContextType['createPatientTreatmentPlan'] = async (
     patientId, 
     treatmentCatalogId, 
     customSessionPrice, 
@@ -475,9 +588,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     setPlans(prev => [newPlan, ...prev]);
+    try {
+      await plansApi.create(newPlan);
+    } catch (err) {
+      console.error('Erro ao salvar plano no banco:', err);
+    }
 
     const isCustomPrice = customSessionPrice !== catalogItem.pricePerSession;
-    logAudit(
+    await logAudit(
       'Criação de Plano de Tratamento',
       'PlanoTratamento',
       newPlanId,
@@ -486,14 +604,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       `Plano Vinculado: R$ ${customSessionPrice}/sessão (${totalSessions} sessões) - Total R$ ${totalAmount.toFixed(2)}${isCustomPrice ? ' [VALOR PERSONALIZADO]' : ''}`
     );
 
-    addTimelineItem(
+    await addTimelineItem(
       patientId,
       'tratamento_contratado',
       `Contratou ${catalogItem.name}`,
       `Plano de ${totalSessions} sessões por R$ ${totalAmount.toFixed(2)} (R$ ${customSessionPrice.toFixed(2)}/sessão).`
     );
 
-    setPatients(prev => prev.map(p => p.id === patientId ? { ...p, status: 'Em tratamento' } : p));
+    const updatedPatient = { ...patient, status: 'Em tratamento' as const };
+    setPatients(prev => prev.map(p => p.id === patientId ? updatedPatient : p));
+    try {
+      await patientsApi.update(updatedPatient);
+    } catch {
+      // Ignora falha secundaria
+    }
   };
 
   const addAppointment: AppContextType['addAppointment'] = async (data) => {
@@ -542,6 +666,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     setAppointments(prev => [newAppointment, ...prev]);
+    try {
+      await appointmentsApi.create(newAppointment);
+    } catch (err) {
+      console.error('Erro ao salvar agendamento no banco:', err);
+    }
 
     if (syncedWithGoogle) {
       setGcalConfig(prev => ({
@@ -551,7 +680,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }));
     }
 
-    logAudit(
+    await logAudit(
       'Novo Agendamento Criado',
       'Agendamento',
       newId,
@@ -565,34 +694,57 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const targetApt = appointments.find(a => a.id === id);
     if (!targetApt) return;
 
-    setAppointments(prev => prev.map(a => a.id === id ? { ...a, status: newStatus } : a));
-    logAudit('Atualização de Status de Agendamento', 'Agendamento', id, `Status da sessão de ${targetApt.patientName} alterado de ${targetApt.status} para ${newStatus}.`);
+    let synced = targetApt.syncedWithGoogle;
 
     if (newStatus === 'Cancelada' && targetApt.googleEventId && gcalConfig.isConnected) {
       try {
         await deleteGoogleCalendarEvent(targetApt.googleEventId);
-        setAppointments(prev => prev.map(a => a.id === id ? { ...a, syncedWithGoogle: false } : a));
+        synced = false;
       } catch (err) {
         setGcalError(err instanceof Error ? err.message : 'Falha ao remover evento no Google Agenda.');
       }
     }
 
-    if (newStatus === 'Realizada' && targetApt.treatmentPlanId) {
-      setPlans(prev => prev.map(pln => {
-        if (pln.id === targetApt.treatmentPlanId) {
-          const completed = pln.completedSessions + 1;
-          const remaining = Math.max(0, pln.totalSessions - completed);
-          return {
-            ...pln,
-            completedSessions: completed,
-            remainingSessions: remaining,
-            status: remaining === 0 ? 'Concluído' : 'Ativo'
-          };
-        }
-        return pln;
-      }));
+    setAppointments(prev => prev.map(a => a.id === id ? { ...a, status: newStatus, syncedWithGoogle: synced } : a));
+    try {
+      await appointmentsApi.updateStatus(id, newStatus, synced);
+    } catch (err) {
+      console.error('Erro ao atualizar status do agendamento no banco:', err);
+    }
 
-      setPatients(prev => prev.map(p => p.id === targetApt.patientId ? { ...p, lastVisitDate: targetApt.date } : p));
+    await logAudit('Atualização de Status de Agendamento', 'Agendamento', id, `Status da sessão de ${targetApt.patientName} alterado de ${targetApt.status} para ${newStatus}.`);
+
+    if (newStatus === 'Realizada' && targetApt.treatmentPlanId) {
+      const targetPlan = plans.find(p => p.id === targetApt.treatmentPlanId);
+      if (targetPlan) {
+        const completed = targetPlan.completedSessions + 1;
+        const remaining = Math.max(0, targetPlan.totalSessions - completed);
+        const updatedPlan: PatientTreatmentPlan = {
+          ...targetPlan,
+          completedSessions: completed,
+          remainingSessions: remaining,
+          status: remaining === 0 ? 'Concluído' : 'Ativo'
+        };
+        setPlans(prev => prev.map(pln => pln.id === targetPlan.id ? updatedPlan : pln));
+        try {
+          await plansApi.update(updatedPlan);
+        } catch (err) {
+          console.error('Erro ao atualizar plano concluído no banco:', err);
+        }
+      }
+
+      if (targetApt.patientId) {
+        const targetPatient = patients.find(p => p.id === targetApt.patientId);
+        if (targetPatient) {
+          const updatedPatient = { ...targetPatient, lastVisitDate: targetApt.date };
+          setPatients(prev => prev.map(p => p.id === targetApt.patientId ? updatedPatient : p));
+          try {
+            await patientsApi.update(updatedPatient);
+          } catch {
+            // Ignora falha secundaria
+          }
+        }
+      }
     }
   };
 
@@ -611,7 +763,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         webhookStatus: 'Ativo (Tempo Real)',
         lastSyncedAt: new Date().toLocaleString('pt-BR')
       }));
-      logAudit('Conexão Google Agenda', 'Agendamento', 'gcal', 'Integração Google Calendar conectada.');
+      await logAudit('Conexão Google Agenda', 'Agendamento', 'gcal', 'Integração Google Calendar conectada.');
       await syncGcalNowInternal(true);
     } catch (err) {
       setGcalError(err instanceof Error ? err.message : 'Falha ao conectar Google Agenda.');
@@ -627,7 +779,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       isConnected: false,
       webhookStatus: 'Inativo'
     }));
-    logAudit('Conexão Google Agenda', 'Agendamento', 'gcal', 'Integração Google Calendar desconectada (sessão do app mantida).');
+    await logAudit('Conexão Google Agenda', 'Agendamento', 'gcal', 'Integração Google Calendar desconectada (sessão do app mantida).');
   };
 
   const syncGcalNowInternal = async (silent = false) => {
@@ -666,6 +818,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       if (imported.length > 0) {
         setAppointments(prev => [...imported, ...prev]);
+        for (const apt of imported) {
+          await appointmentsApi.create(apt).catch(() => null);
+        }
       }
 
       setGcalConfig(prev => ({
@@ -677,7 +832,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         accountEmail: prev.accountEmail || currentUser?.email || ''
       }));
 
-      logAudit(
+      await logAudit(
         'Sincronização Google Agenda',
         'Agendamento',
         'gcal_sync',
@@ -731,6 +886,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       campaigns,
       gcalBusy,
       gcalError,
+      isLoadingData,
       addPatient,
       updatePatient,
       deletePatient,
@@ -744,7 +900,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       connectGoogleCalendar,
       disconnectGoogleCalendar,
       syncGcalNow,
-      resetData
+      resetData,
+      refreshData: loadDataFromApi
     }}>
       {children}
     </AppContext.Provider>
