@@ -11,19 +11,25 @@ import {
   Phone,
   Clock,
   Tag,
-  ArrowRight
+  ArrowRight,
+  FileSpreadsheet,
+  Plus,
+  MessageCircle,
+  ExternalLink
 } from 'lucide-react';
 import { useApp } from '../../../context/AppContext';
 import { Button } from '../../ui/Button';
 import { Card } from '../../ui/Card';
 import { Badge } from '../../ui/Badge';
 import Papa from 'papaparse';
+import { ImportLeadsModal } from './ImportLeadsModal';
 
 export const RemarketingCenter: React.FC = () => {
   const { patients, plans, campaigns } = useApp();
 
-  const [activeTab, setActiveTab] = useState<'inativos' | 'pacotes' | 'aniversariantes' | 'leads' | 'historico'>('inativos');
+  const [activeTab, setActiveTab] = useState<'inativos' | 'pacotes' | 'aniversariantes' | 'leads' | 'historico'>('leads');
   const [inactiveDaysThreshold, setInactiveDaysThreshold] = useState<number>(60);
+  const [isImportModalOpen, setIsImportModalOpen] = useState<boolean>(false);
 
   // 1. Pacientes Inativos
   const inactivePatients = patients.filter(p => {
@@ -76,6 +82,16 @@ export const RemarketingCenter: React.FC = () => {
           <p className="text-xs text-slate-500 mt-1 font-medium">
             Segmente pacientes para reativação, renovação de pacotes, aniversariantes e régua de leads.
           </p>
+        </div>
+
+        <div className="flex items-center gap-2.5">
+          <Button
+            onClick={() => setIsImportModalOpen(true)}
+            variant="primary"
+            icon={<FileSpreadsheet className="w-4 h-4" />}
+          >
+            Importar Lista
+          </Button>
         </div>
       </div>
 
@@ -249,26 +265,95 @@ export const RemarketingCenter: React.FC = () => {
       {/* Tab 4: Funil de Leads & Régua de Follow-up */}
       {activeTab === 'leads' && (
         <div className="space-y-4 animate-fade-in">
-          <Card title="Funil de Leads (Acompanhamento em 3, 7 e 15 dias)">
+          <Card title="Funil de Leads & Remarketing">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mb-4 pb-4 border-b border-slate-100">
+              <p className="text-xs text-slate-500 font-medium">
+                Total de <strong>{leadPatients.length} leads</strong> aguardando contato ou reativação comercial.
+              </p>
+
+              <div className="flex items-center gap-2">
+                <Button
+                  onClick={() => setIsImportModalOpen(true)}
+                  variant="primary"
+                  size="sm"
+                  icon={<FileSpreadsheet className="w-4 h-4" />}
+                >
+                  Importar Mais Leads (CSV)
+                </Button>
+                <Button
+                  onClick={() => handleExportSegmentCSV(leadPatients, 'Leads_Remarketing')}
+                  variant="secondary"
+                  size="sm"
+                  icon={<Download className="w-4 h-4" />}
+                >
+                  Exportar CSV
+                </Button>
+              </div>
+            </div>
+
             <div className="space-y-3">
               {leadPatients.length === 0 ? (
-                <p className="text-xs text-slate-400 italic text-center py-6">Nenhum lead pendente de fechamento.</p>
-              ) : (
-                leadPatients.map(p => (
-                  <div key={p.id} className="p-4 rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-between">
-                    <div>
-                      <h4 className="font-extrabold text-slate-900 text-sm">{p.name}</h4>
-                      <p className="text-xs text-slate-500 mt-0.5">Origem: <strong>{p.origin}</strong> • Tel: {p.phone}</p>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold text-slate-500">Follow-up: 3 dias</span>
-                      <Button variant="secondary" size="sm">
-                        Agendar Chamada
-                      </Button>
-                    </div>
+                <div className="text-center py-10 space-y-3">
+                  <div className="w-12 h-12 rounded-2xl bg-brand-50 text-brand-600 mx-auto flex items-center justify-center">
+                    <Users className="w-6 h-6" />
                   </div>
-                ))
+                  <p className="text-sm font-bold text-slate-700">Nenhum lead pendente de fechamento</p>
+                  <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                    Importe uma lista em CSV ou cadastre novos leads para iniciar o remarketing.
+                  </p>
+                  <Button variant="primary" size="sm" onClick={() => setIsImportModalOpen(true)} icon={<FileSpreadsheet className="w-4 h-4" />}>
+                    Importar Lista Agora
+                  </Button>
+                </div>
+              ) : (
+                leadPatients.map(p => {
+                  const cleanPhone = p.phone.replace(/\D/g, '');
+                  const waNumber = cleanPhone.length <= 11 && !cleanPhone.startsWith('55') ? `55${cleanPhone}` : cleanPhone;
+                  const waLink = cleanPhone ? `https://wa.me/${waNumber}` : undefined;
+
+                  return (
+                    <div key={p.id} className="p-4 rounded-xl border border-slate-200 bg-slate-50 flex flex-col md:flex-row md:items-center justify-between gap-3 hover:bg-slate-100/70 transition-colors">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h4 className="font-extrabold text-slate-900 text-sm">{p.name}</h4>
+                          <span className="px-2 py-0.5 rounded-lg text-[11px] font-bold bg-brand-50 text-brand-700 border border-brand-200">
+                            {p.status}
+                          </span>
+                          {p.tags.map((tag, idx) => (
+                            <span key={idx} className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-200/80 text-slate-700">
+                              #{tag}
+                            </span>
+                          ))}
+                        </div>
+                        <p className="text-xs text-slate-500">
+                          Origem: <strong>{p.origin}</strong> • Tel: {p.phone || 'Sem telefone'} • Cadastrado em: {p.firstVisitDate}
+                        </p>
+                        {p.notes && (
+                          <p className="text-xs text-slate-600 bg-white/80 p-2 rounded-lg border border-slate-200/60 max-w-2xl font-mono">
+                            {p.notes}
+                          </p>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        {waLink && (
+                          <a
+                            href={waLink}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-500 hover:bg-emerald-600 text-white shadow-soft transition-all"
+                          >
+                            <MessageCircle className="w-3.5 h-3.5" />
+                            <span>WhatsApp</span>
+                          </a>
+                        )}
+                        <Button variant="secondary" size="sm" icon={<MessageSquare className="w-3.5 h-3.5" />}>
+                          Registrar Contato
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })
               )}
             </div>
           </Card>
@@ -297,6 +382,11 @@ export const RemarketingCenter: React.FC = () => {
           </Card>
         </div>
       )}
+
+      <ImportLeadsModal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+      />
     </div>
   );
 };

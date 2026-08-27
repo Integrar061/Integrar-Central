@@ -26,7 +26,7 @@ export const PatientList: React.FC<PatientListProps> = ({
   onSelectPatient,
   onOpenNewPatientModal
 }) => {
-  const { patients } = useApp();
+  const { patients, isPatientsLoading } = useApp();
 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'TODOS' | PatientStatus | 'RISCO_CHURN'>('TODOS');
@@ -118,7 +118,16 @@ export const PatientList: React.FC<PatientListProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-sm font-medium">
-              {filteredPatients.length === 0 ? (
+              {isPatientsLoading && filteredPatients.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="py-12 text-center text-slate-500">
+                    <div className="flex items-center justify-center gap-2">
+                      <div className="w-4 h-4 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
+                      <span>Sincronizando pacientes com banco de dados...</span>
+                    </div>
+                  </td>
+                </tr>
+              ) : filteredPatients.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="py-12 text-center text-slate-400">
                     Nenhum paciente encontrado para os filtros selecionados.

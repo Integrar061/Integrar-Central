@@ -27,9 +27,32 @@ import {
   listUpcomingGoogleEvents,
   parseGoogleEventSchedule
 } from '../lib/googleCalendar';
+import {
+  isSupabaseConfigured,
+  fetchPatientsFromSupabase,
+  insertPatientToSupabase,
+  updatePatientInSupabase,
+  deletePatientFromSupabase,
+  bulkUpsertPatientsToSupabase
+} from '../lib/supabase';
+
+export interface ImportLeadPayload {
+  name: string;
+  phone: string;
+  email?: string;
+  origin?: Patient['origin'];
+  status?: Patient['status'];
+  treatment?: string;
+  contact?: string;
+  notes?: string;
+  tags?: string[];
+  date?: string;
+  whatsappLink?: string;
+}
 
 interface AppContextType {
   patients: Patient[];
+  isPatientsLoading: boolean;
   treatments: TreatmentCatalogItem[];
   plans: PatientTreatmentPlan[];
   appointments: Appointment[];
@@ -39,9 +62,10 @@ interface AppContextType {
   gcalBusy: boolean;
   gcalError: string | null;
   
-  addPatient: (patientData: Omit<Patient, 'id' | 'timeline' | 'attachments' | 'firstVisitDate' | 'lastVisitDate' | 'churnRisk'>) => void;
-  updatePatient: (patient: Patient) => void;
-  deletePatient: (id: string) => void;
+  addPatient: (patientData: Omit<Patient, 'id' | 'timeline' | 'attachments' | 'firstVisitDate' | 'lastVisitDate' | 'churnRisk'>) => Promise<Patient>;
+  updatePatient: (patient: Patient) => Promise<void>;
+  deletePatient: (id: string) => Promise<void>;
+  bulkImportLeads: (leads: ImportLeadPayload[], strategy: 'skip' | 'update' | 'create_anyway') => Promise<{ imported: number; updated: number; skipped: number; failed: number }>;
   addTimelineItem: (patientId: string, type: TimelineItem['type'], title: string, description: string) => void;
   
   addTreatmentCatalogItem: (item: Omit<TreatmentCatalogItem, 'id'>) => void;
@@ -85,6 +109,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [patients, setPatients] = useState<Patient[]>(() =>
     readStore(`${STORAGE_KEY}_patients`, INITIAL_PATIENTS)
   );
+  const [isPatientsLoading, setIsPatientsLoading] = useState<boolean>(false);
+
   const [treatments, setTreatments] = useState<TreatmentCatalogItem[]>(() =>
     readStore(`${STORAGE_KEY}_treatments`, INITIAL_TREATMENTS)
   );
@@ -105,6 +131,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   );
   const [gcalBusy, setGcalBusy] = useState(false);
   const [gcalError, setGcalError] = useState<string | null>(null);
+
+  // Carregamento inicial do Supabase (SELECT na tabela patients)
+  useEffect(() => {
+    let isMounted = true;
+    const loadSupabasePatients = async () => {
+      if (!isSupabaseConfigured()) return;
+      try {
+        setIsPatientsLoading(true);
+        const remotePatients = await fetchPatientsFromSupabase();
+        if (isMounted && remotePatients && remotePatients.length > 0) {
+          setPatients(remotePatients);
+          localStorage.setItem(`${STORAGE_KEY}_patients`, JSON.stringify(remotePatients));
+        }
+      } catch (err) {
+        console.warn('Não foi possível sincronizar pacientes com Supabase ao iniciar:', err);
+      } finally {
+        if (isMounted) setIsPatientsLoading(false);
+      }
+    };
+
+    loadSupabasePatients();
+    return () => { isMounted = false; };
+  }, []);
 
   useEffect(() => {
     localStorage.setItem(`${STORAGE_KEY}_patients`, JSON.stringify(patients));
@@ -161,7 +210,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setAuditLogs(prev => [newLog, ...prev]);
   };
 
-  const addPatient: AppContextType['addPatient'] = (data) => {
+  const addPatient: AppContextType['addPatient'] = async (data) => {
     const today = new Date().toISOString().split('T')[0];
     const newId = `pat-${Date.now()}`;
     const newPatient: Patient = {
@@ -184,21 +233,168 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       churnRisk: false
     };
 
+    // Atualiza estado local e localStorage imediatamente
     setPatients(prev => [newPatient, ...prev]);
     logAudit('Novo Cadastro de Paciente', 'Paciente', newId, `Paciente ${data.name} cadastrado com sucesso.`);
+
+    // Persiste no Supabase assincronamente se configurado
+    if (isSupabaseConfigured()) {
+      try {
+        await insertPatientToSupabase(newPatient);
+      } catch (err) {
+        console.error('Erro ao persistir novo paciente no Supabase:', err);
+      }
+    }
+
+    return newPatient;
   };
 
-  const updatePatient = (updated: Patient) => {
+  const updatePatient = async (updated: Patient) => {
     setPatients(prev => prev.map(p => p.id === updated.id ? updated : p));
     logAudit('Atualização de Dados do Paciente', 'Paciente', updated.id, `Dados cadastrais do paciente ${updated.name} alterados.`);
+
+    if (isSupabaseConfigured()) {
+      try {
+        await updatePatientInSupabase(updated);
+      } catch (err) {
+        console.error('Erro ao atualizar paciente no Supabase:', err);
+      }
+    }
   };
 
-  const deletePatient = (id: string) => {
+  const deletePatient = async (id: string) => {
     const target = patients.find(p => p.id === id);
     setPatients(prev => prev.filter(p => p.id !== id));
     if (target) {
       logAudit('Exclusão de Cadastro de Paciente', 'Paciente', id, `Exclusão do registro do paciente ${target.name}.`);
     }
+
+    if (isSupabaseConfigured()) {
+      try {
+        await deletePatientFromSupabase(id);
+      } catch (err) {
+        console.error('Erro ao excluir paciente no Supabase:', err);
+      }
+    }
+  };
+
+  const bulkImportLeads: AppContextType['bulkImportLeads'] = async (leads, strategy) => {
+    const today = new Date().toISOString().split('T')[0];
+    let importedCount = 0;
+    let updatedCount = 0;
+    let skippedCount = 0;
+    let failedCount = 0;
+
+    const sanitizePhone = (ph: string) => ph.replace(/\D/g, '');
+    const existingPhoneMap = new Map<string, Patient>();
+    patients.forEach(p => {
+      const clean = sanitizePhone(p.phone);
+      if (clean) existingPhoneMap.set(clean, p);
+    });
+
+    const updatedPatientsList = [...patients];
+    const newPatientsToInsert: Patient[] = [];
+
+    for (const lead of leads) {
+      try {
+        const cleanLeadPhone = sanitizePhone(lead.phone);
+        const existing = cleanLeadPhone ? existingPhoneMap.get(cleanLeadPhone) : undefined;
+
+        if (existing) {
+          if (strategy === 'skip') {
+            skippedCount++;
+            continue;
+          } else if (strategy === 'update') {
+            const updatedPatient: Patient = {
+              ...existing,
+              name: lead.name || existing.name,
+              origin: lead.origin || existing.origin,
+              status: lead.status || existing.status,
+              notes: lead.notes ? (existing.notes ? `${existing.notes} | ${lead.notes}` : lead.notes) : existing.notes,
+              tags: Array.from(new Set([...existing.tags, ...(lead.tags || [])]))
+            };
+            const idx = updatedPatientsList.findIndex(p => p.id === existing.id);
+            if (idx >= 0) {
+              updatedPatientsList[idx] = updatedPatient;
+            }
+            updatedCount++;
+            continue;
+          }
+          // strategy === 'create_anyway' continues below
+        }
+
+        const newId = `pat-lead-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+        const initialStatus = lead.status || 'Lead';
+        const newPatient: Patient = {
+          id: newId,
+          name: lead.name,
+          cpf: '',
+          phone: lead.phone,
+          email: lead.email || '',
+          birthDate: '',
+          address: '',
+          origin: lead.origin || 'Campanha Meta',
+          status: initialStatus,
+          notes: [
+            lead.treatment ? `Tratamento de interesse: ${lead.treatment}` : '',
+            lead.contact ? `Contato: ${lead.contact}` : '',
+            lead.whatsappLink ? `WhatsApp: ${lead.whatsappLink}` : '',
+            lead.notes ? lead.notes : ''
+          ].filter(Boolean).join(' | '),
+          attachments: [],
+          timeline: [
+            {
+              id: `tl-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+              patientId: newId,
+              type: 'remarketing',
+              title: 'Lead Importado via Planilha',
+              description: `Lead importado com status "${initialStatus}". Tratamento: ${lead.treatment || 'N/A'}.`,
+              date: lead.date || today,
+              author: currentUser?.name || 'Importador'
+            }
+          ],
+          firstVisitDate: lead.date || today,
+          lastVisitDate: lead.date || today,
+          tags: lead.tags || ['Lead Remarketing'],
+          churnRisk: false
+        };
+
+        newPatientsToInsert.push(newPatient);
+        if (cleanLeadPhone) {
+          existingPhoneMap.set(cleanLeadPhone, newPatient);
+        }
+        importedCount++;
+      } catch (err) {
+        failedCount++;
+      }
+    }
+
+    const finalList = [...newPatientsToInsert, ...updatedPatientsList];
+    setPatients(finalList);
+    localStorage.setItem(`${STORAGE_KEY}_patients`, JSON.stringify(finalList));
+
+    // Persistência em lote no Supabase
+    if (isSupabaseConfigured() && (newPatientsToInsert.length > 0 || updatedCount > 0)) {
+      try {
+        await bulkUpsertPatientsToSupabase(finalList);
+      } catch (err) {
+        console.error('Erro na persistência em lote com Supabase:', err);
+      }
+    }
+
+    logAudit(
+      'Importação em Lote de Leads',
+      'Paciente',
+      'bulk-import',
+      `Importação concluída: ${importedCount} criados, ${updatedCount} atualizados, ${skippedCount} ignorados, ${failedCount} erros.`
+    );
+
+    return {
+      imported: importedCount,
+      updated: updatedCount,
+      skipped: skippedCount,
+      failed: failedCount
+    };
   };
 
   const addTimelineItem = (patientId: string, type: TimelineItem['type'], title: string, description: string) => {
@@ -526,6 +722,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   return (
     <AppContext.Provider value={{
       patients,
+      isPatientsLoading,
       treatments,
       plans,
       appointments,
@@ -537,6 +734,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       addPatient,
       updatePatient,
       deletePatient,
+      bulkImportLeads,
       addTimelineItem,
       addTreatmentCatalogItem,
       updateTreatmentCatalogItem,

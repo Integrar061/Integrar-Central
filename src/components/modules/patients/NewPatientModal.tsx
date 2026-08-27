@@ -26,30 +26,38 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({ isOpen, onClos
   });
 
   const [tagInput, setTagInput] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.name || !formData.phone) return;
 
-    addPatient({
-      ...formData,
-      tags: formData.tags.length > 0 ? formData.tags : ['Novo Paciente']
-    });
+    try {
+      setIsSubmitting(true);
+      await addPatient({
+        ...formData,
+        tags: formData.tags.length > 0 ? formData.tags : ['Novo Paciente']
+      });
 
-    setFormData({
-      name: '',
-      cpf: '',
-      birthDate: '',
-      phone: '',
-      email: '',
-      address: '',
-      origin: 'Instagram',
-      status: 'Ativo',
-      notes: '',
-      tags: []
-    });
+      setFormData({
+        name: '',
+        cpf: '',
+        birthDate: '',
+        phone: '',
+        email: '',
+        address: '',
+        origin: 'Instagram',
+        status: 'Ativo',
+        notes: '',
+        tags: []
+      });
 
-    onClose();
+      onClose();
+    } catch (err) {
+      console.error('Erro ao cadastrar paciente:', err);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleAddTag = () => {
@@ -205,8 +213,10 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({ isOpen, onClos
         </div>
 
         <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
-          <Button type="button" variant="ghost" onClick={onClose}>Cancelar</Button>
-          <Button type="submit" variant="primary">Salvar Cadastro</Button>
+          <Button type="button" variant="ghost" onClick={onClose} disabled={isSubmitting}>Cancelar</Button>
+          <Button type="submit" variant="primary" disabled={isSubmitting}>
+            {isSubmitting ? 'Salvando...' : 'Salvar Cadastro'}
+          </Button>
         </div>
       </form>
     </Modal>
